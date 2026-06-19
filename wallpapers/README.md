@@ -2,14 +2,18 @@
 
 # Tier wallpapers
 
-Drop a wallpaper image here for each tier defined in
+Drop a wallpaper image here for each ship tier defined in
 [`../config/tiers.json`](../config/tiers.json). The filename must match the value
-in that file — e.g. `tier1.jpg`, `flagship.jpg`.
+in that file:
 
-At first boot, pass the tier to apply its wallpaper:
+`probe.png`, `fighter.png`, `corvette.png`, `frigate.png`, `destroyer.png`,
+`cruiser.png`, `battlecruiser.png`, `battleship.png`, `dreadnought.png`,
+`titan.png`
+
+At first boot, pass the tier to apply its wallpaper (case-insensitive):
 
 ```
-powershell -NoProfile -ExecutionPolicy Bypass -File X:\CEC-Autosetep\bootstrap.ps1 -Tier flagship
+powershell -NoProfile -ExecutionPolicy Bypass -File X:\CEC-Autosetep\bootstrap.ps1 -Tier Dreadnought
 ```
 
 If no `-Tier` is given, `wallpaper.defaultTier` in `config/tweaks.json` is used

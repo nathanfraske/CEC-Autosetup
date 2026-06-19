@@ -194,7 +194,7 @@ function Get-TierWallpaper {
         if (-not (Test-Path -LiteralPath $tiersPath)) { return $null }
         $Tiers = (Get-Content -LiteralPath $tiersPath -Raw -Encoding UTF8 | ConvertFrom-Json).tiers
     }
-    $prop = $Tiers.PSObject.Properties[$Tier]
+    $prop = $Tiers.PSObject.Properties | Where-Object { $_.Name -ieq $Tier } | Select-Object -First 1
     if (-not $prop) { return $null }
     $file = [string]$prop.Value
     if ([string]::IsNullOrWhiteSpace($file)) { return $null }

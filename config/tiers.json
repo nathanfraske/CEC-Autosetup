@@ -1,9 +1,15 @@
 {
-  "_comment": "Build/ship tier -> wallpaper file (relative to the wallpaperDir, default 'wallpapers/'). Select the tier with -Tier <name> (or wallpaper.defaultTier in tweaks.json). Drop the matching images into wallpapers/. These tier names are EXAMPLES - rename to match your product selection.",
+  "_comment": "Critical Error Computing ship tiers (increasing order) -> wallpaper file, relative to wallpaperDir (default 'wallpapers/'). Select with -Tier <name> (case-insensitive) or wallpaper.defaultTier in tweaks.json. Drop the matching images into wallpapers/. Spellings corrected to Cruiser / Battlecruiser / Dreadnought - rename keys here if you prefer different spellings.",
   "tiers": {
-    "tier1": "tier1.jpg",
-    "tier2": "tier2.jpg",
-    "tier3": "tier3.jpg",
-    "flagship": "flagship.jpg"
+    "Probe": "probe.png",
+    "Fighter": "fighter.png",
+    "Corvette": "corvette.png",
+    "Frigate": "frigate.png",
+    "Destroyer": "destroyer.png",
+    "Cruiser": "cruiser.png",
+    "Battlecruiser": "battlecruiser.png",
+    "Battleship": "battleship.png",
+    "Dreadnought": "dreadnought.png",
+    "Titan": "titan.png"
   }
 }

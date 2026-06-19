@@ -56,18 +56,19 @@ wallpaper apply to the current user immediately.
 
 A small framework: a tier name → image, selected at first boot.
 
-1. Define tiers in [`config/tiers.json`](../config/tiers.json):
-   ```json
-   { "tiers": { "tier1": "tier1.jpg", "flagship": "flagship.png" } }
-   ```
+1. Tiers are defined in [`config/tiers.json`](../config/tiers.json). The shipped
+   tiers (increasing order) are: **Probe, Fighter, Corvette, Frigate, Destroyer,
+   Cruiser, Battlecruiser, Battleship, Dreadnought, Titan** → `probe.png` …
+   `titan.png`.
 2. Drop the matching images into [`wallpapers/`](../wallpapers/) (ship them on the
    USB so it works offline).
-3. Select the tier at first boot:
+3. Select the tier at first boot (case-insensitive):
    ```
-   powershell -NoProfile -ExecutionPolicy Bypass -File X:\CEC-Autosetep\bootstrap.ps1 -Tier flagship
+   powershell -NoProfile -ExecutionPolicy Bypass -File X:\CEC-Autosetep\bootstrap.ps1 -Tier Dreadnought
    ```
    With no `-Tier`, `wallpaper.defaultTier` in `tweaks.json` is used; if neither is
    set or the image is missing, the wallpaper step is skipped (warned, not fatal).
 
-Tier names are yours — the shipped names are examples. The mapping accepts a
-filename (resolved under `wallpaperDir`) or an absolute path.
+The mapping accepts a filename (resolved under `wallpaperDir`) or an absolute
+path. Rename the tier keys in `config/tiers.json` if you prefer different
+spellings.

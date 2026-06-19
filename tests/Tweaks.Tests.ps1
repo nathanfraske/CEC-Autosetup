@@ -36,6 +36,11 @@ Describe 'Tweaks: tier wallpaper resolution' {
         $abs = [pscustomobject]@{ flagship = '/branding/flagship.png' }
         Get-TierWallpaper -Tier 'flagship' -Tiers $abs -Root '/opt/cec' | Should -Be '/branding/flagship.png'
     }
+    It 'matches the tier case-insensitively' {
+        $ships = [pscustomobject]@{ Battlecruiser = 'battlecruiser.png' }
+        Get-TierWallpaper -Tier 'battlecruiser' -Tiers $ships -Root '/opt/cec' | Should -BeLike '*battlecruiser.png'
+        Get-TierWallpaper -Tier 'BATTLECRUISER' -Tiers $ships -Root '/opt/cec' | Should -BeLike '*battlecruiser.png'
+    }
     It 'returns $null for an unknown tier' {
         Get-TierWallpaper -Tier 'nope' -Tiers $script:tiers -Root '/opt/cec' | Should -BeNullOrEmpty
     }
