@@ -1,0 +1,53 @@
+{
+  "_comment": "Peripheral-software catalog. Each app installs only when a matching device is detected on the machine. Primary install path is winget (resolves the real vendor installer); when no winget package exists the app falls back to opening the official download page in Chrome, exactly like the ASRock driver path. Add new apps here without touching code. See docs/architecture.md (Apps layer) and docs/vendor-contracts.md (Open items).",
+  "apps": [
+    {
+      "name": "SignalRGB",
+      "wingetId": "WhirlwindFX.SignalRgb",
+      "fallbackUrl": "https://signalrgb.com/",
+      "match": {
+        "vidpid": [],
+        "namePatterns": [
+          "RGB",
+          "Aura",
+          "Mystic Light",
+          "RGB Fusion",
+          "Polychrome",
+          "Razer",
+          "Corsair",
+          "SteelSeries",
+          "Logitech G",
+          "HyperX",
+          "NZXT",
+          "Govee"
+        ]
+      },
+      "notes": "Cross-brand RGB controller. winget id verified 2026-06-19 (WhirlwindFX.SignalRgb). Name patterns are intentionally broad; tighten per shop experience."
+    },
+    {
+      "name": "Thermalright Control Center",
+      "wingetId": null,
+      "fallbackUrl": "https://www.thermalright.com/support/download/",
+      "match": {
+        "vidpid": [
+          "87CD:70DB",
+          "87AD:70DB",
+          "0416:5406",
+          "0402:3922",
+          "0416:5408",
+          "0416:5409",
+          "0416:5302",
+          "0418:5303",
+          "0418:5304",
+          "0416:8001"
+        ],
+        "namePatterns": [
+          "Thermalright",
+          "TRCC",
+          "TR-CC"
+        ]
+      },
+      "notes": "No winget package as of 2026-06-19; opens the official download page in Chrome. VID:PID list is community-sourced from the thermalright-trcc-linux project (HID LCD/LED, SCSI, bulk controllers) and should be confirmed against official hardware. See docs/vendor-contracts.md Open items."
+    }
+  ]
+}

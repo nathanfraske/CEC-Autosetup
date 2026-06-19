@@ -1,0 +1,47 @@
+{
+  "appName": "firstboot",
+  "http": {
+    "timeoutSec": 60,
+    "retries": 4,
+    "backoffBaseMs": 1000,
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+  },
+  "asus": {
+    "systemCode": "asus",
+    "websiteCode": "global",
+    "pdInfoBase": "https://odinapi.asus.com/recent-data/apiv2/PDInfo",
+    "driversBase": "https://www.asus.com/support/webapi/ProductV2/GetPDDrivers",
+    "cdnBase": "https://dlcdnets.asus.com",
+    "fallbackBase": "https://www.asus.com/supportonly",
+    "osidCandidates": [52, 50, 49, 48, 45, 44, 39, 38, 33, 18, 16, 7]
+  },
+  "gigabyte": {
+    "supportBase": "https://www.gigabyte.com/Motherboard",
+    "cdnBase": "https://download.gigabyte.com",
+    "challengeMinBytes": 51200
+  },
+  "asrock": {
+    "supportBase": "https://www.asrock.com/mb",
+    "cdnBase": "https://download.asrock.com"
+  },
+  "chrome": {
+    "msiUrl": "https://dl.google.com/tag/s/dl/chrome/install/googlechromestandaloneenterprise64.msi",
+    "wingetId": "Google.Chrome"
+  },
+  "categories": {
+    "denyDefault": [
+      "Software and Utility",
+      "Utilities",
+      "Armoury Crate",
+      "Manual",
+      "BIOS",
+      "Firmware",
+      "Patch",
+      "Tools"
+    ]
+  },
+  "apps": {
+    "enabled": true,
+    "catalogPath": "config/apps.json"
+  }
+}
