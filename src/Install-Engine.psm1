@@ -12,15 +12,17 @@ Import-Module (Join-Path $PSScriptRoot 'Common.psm1')
 function Save-Download {
     <#
         .SYNOPSIS
-        Downloads a URL to a destination using BITS, falling back to HTTP.
-        Returns the destination path.
+        Downloads a URL to a destination with a live progress bar (async BITS),
+        falling back to HTTP. Returns the destination path.
     #>
     [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory)][string] $Url,
-        [Parameter(Mandatory)][string] $Destination
+        [Parameter(Mandatory)][string] $Destination,
+        [string] $Activity
     )
 
+    if (-not $Activity) { $Activity = "Downloading $(Split-Path -Leaf $Destination)" }
     if (-not $PSCmdlet.ShouldProcess($Destination, "Download $Url")) { return $Destination }
 
     $dir = Split-Path -Parent $Destination
@@ -28,16 +30,41 @@ function Save-Download {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
     }
 
-    try {
-        if (Get-Command Start-BitsTransfer -ErrorAction SilentlyContinue) {
-            Start-BitsTransfer -Source $Url -Destination $Destination -ErrorAction Stop
-            return $Destination
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    if (Get-Command Start-BitsTransfer -ErrorAction SilentlyContinue) {
+        $job = $null
+        try {
+            $job = Start-BitsTransfer -Source $Url -Destination $Destination -Asynchronous -DisplayName 'firstboot' -ErrorAction Stop
+            while ($job.JobState -in 'Connecting', 'Queued', 'Transferring', 'TransientError') {
+                $total = [double]$job.BytesTotal
+                $done  = [double]$job.BytesTransferred
+                $pct   = if ($total -gt 0) { [int][Math]::Min(100, ($done / $total) * 100) } else { 0 }
+                $mbps  = if ($sw.Elapsed.TotalSeconds -gt 0) { ($done / 1MB) / $sw.Elapsed.TotalSeconds } else { 0 }
+                $status = if ($total -gt 0) {
+                    "{0:N1} / {1:N1} MB  ({2:N1} MB/s)" -f ($done / 1MB), ($total / 1MB), $mbps
+                } else {
+                    "{0:N1} MB  ({1:N1} MB/s)" -f ($done / 1MB), $mbps
+                }
+                Write-Progress -Id 1 -Activity $Activity -Status $status -PercentComplete $pct
+                Start-Sleep -Milliseconds 500
+            }
+            if ($job.JobState -eq 'Transferred') {
+                Complete-BitsTransfer -BitsJob $job
+                Write-Progress -Id 1 -Activity $Activity -Completed
+                $mb = (Get-Item -LiteralPath $Destination).Length / 1MB
+                Write-Log ("Downloaded {0} ({1:N1} MB in {2:N0}s)" -f (Split-Path -Leaf $Destination), $mb, $sw.Elapsed.TotalSeconds) -Level Info
+                return $Destination
+            }
+            throw "BITS job ended in state '$($job.JobState)': $($job.ErrorDescription)"
+        } catch {
+            Write-Progress -Id 1 -Activity $Activity -Completed
+            if ($job) { Remove-BitsTransfer -BitsJob $job -ErrorAction SilentlyContinue }
+            Write-Log "BITS transfer failed ($($_.Exception.Message)); falling back to HTTP." -Level Warn
         }
-    } catch {
-        Write-Log "BITS transfer failed ($($_.Exception.Message)); falling back to HTTP." -Level Warn
     }
 
-    Invoke-Http -Url $Url -OutFile $Destination | Out-Null
+    Write-Log "Downloading $(Split-Path -Leaf $Destination) via HTTP..." -Level Info
+    Invoke-Http -Url $Url -OutFile $Destination | Out-Null   # Invoke-WebRequest shows its own progress
     return $Destination
 }
 
@@ -182,7 +209,7 @@ function Install-DriverPackage {
 
     try {
         Write-Log "Downloading $($Entry.Name) ($($Entry.Version))..." -Level Info
-        Save-Download -Url $Entry.Url -Destination $dest | Out-Null
+        Save-Download -Url $Entry.Url -Destination $dest -Activity "Downloading $($Entry.Category): $($Entry.Name)" | Out-Null
     } catch {
         Write-Log "Download failed for $($Entry.Name): $($_.Exception.Message)" -Level Error
         $result.Status = 'Failed'; $result.Method = 'download'; $result.Detail = $_.Exception.Message

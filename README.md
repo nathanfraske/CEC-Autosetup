@@ -44,6 +44,8 @@ where it doesn't.
   dev-only).
 - **Idempotent and logged.** Re-running is safe. Everything is transcripted to
   `%ProgramData%\firstboot\logs\firstboot_<timestamp>.log`.
+- **Live on-screen status.** The operator sees per-step status plus a real
+  download progress bar (percent, MB, speed) — important for the large GPU driver.
 
 ## Quickstart
 

@@ -169,7 +169,13 @@ if (-not $board.Vendor) {
                 -DenyDefault $settings.categories.denyDefault -IncludeBiosEntries:$IncludeBios
             Write-Log "Selected $(@($kept).Count) of $(@($drivers).Count) driver file(s) to process." -Level Info
 
+            $idx = 0
+            $tot = @($kept).Count
             foreach ($entry in $kept) {
+                $idx++
+                Write-Progress -Id 0 -Activity "$(Get-AppName): installing drivers" `
+                    -Status "[$idx/$tot] $($entry.Category) - $($entry.Name)" `
+                    -PercentComplete ([int](($idx / [Math]::Max(1, $tot)) * 100))
                 if ([string]$entry.Category -match '(?i)bios|firmware') {
                     Write-Log "BIOS listed (NOT flashed): $($entry.Name) $($entry.Version)" -Level Warn
                     $driverResults.Add([pscustomobject]@{ Name = $entry.Name; Category = $entry.Category; Version = $entry.Version; Method = 'bios'; Status = 'ListedOnly'; Detail = $entry.Url }) | Out-Null
@@ -178,6 +184,7 @@ if (-not $board.Vendor) {
                 $r = Install-DriverPackage -Entry $entry
                 $driverResults.Add($r) | Out-Null
             }
+            Write-Progress -Id 0 -Activity "$(Get-AppName): installing drivers" -Completed
         }
 
         # Fallback to Chrome when headless is unsupported, failed, or unresolved.
@@ -237,11 +244,17 @@ if ($SkipApps -or -not $appsEnabled) {
         if (@($appMatches).Count -eq 0) {
             Write-Log "No catalog apps matched the detected hardware." -Level Info
         }
+        $aidx = 0
+        $atot = @($appMatches).Count
         foreach ($m in $appMatches) {
+            $aidx++
+            Write-Progress -Id 0 -Activity "$(Get-AppName): installing apps" `
+                -Status "[$aidx/$atot] $($m.Name)" -PercentComplete ([int](($aidx / [Math]::Max(1, $atot)) * 100))
             Write-Log "App match: $($m.Name) ($($m.Reason))" -Level Info
             $r = Install-App -App $m.App
             $appResults.Add($r) | Out-Null
         }
+        Write-Progress -Id 0 -Activity "$(Get-AppName): installing apps" -Completed
     } catch {
         Write-Log "Apps phase error: $($_.Exception.Message)" -Level Warn
     }

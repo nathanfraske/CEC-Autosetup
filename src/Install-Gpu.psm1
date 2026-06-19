@@ -157,7 +157,7 @@ function Install-NvidiaDriver {
     try {
         $dest = Join-Path (Get-WorkDirectory) ([IO.Path]::GetFileName(($info.Url -split '\?')[0]))
         Write-Log "Downloading NVIDIA driver $($info.Version) (large file)..." -Level Info
-        Save-Download -Url $info.Url -Destination $dest | Out-Null
+        Save-Download -Url $info.Url -Destination $dest -Activity "Downloading NVIDIA driver $($info.Version)" | Out-Null
         Write-Log "Installing NVIDIA driver silently ($($s.nvidia.silentArgs))..." -Level Info
         $code = Invoke-ExeInstaller -Path $dest -Arguments $s.nvidia.silentArgs
         $result.Status = if ($code -in 0, 1) { 'Installed' } else { 'Failed' }   # NVIDIA setup uses 0/1 for success/reboot
