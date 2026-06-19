@@ -29,6 +29,7 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 Import-Module (Join-Path $here 'Common.psm1') -Force
 Import-Module (Join-Path $here 'Detect-Hardware.psm1') -Force
 Import-Module (Join-Path $here 'Detect-Peripherals.psm1') -Force
+Import-Module (Join-Path $here 'Detect-Gpu.psm1') -Force
 Import-Module (Join-Path $here 'Mapping.psm1') -Force
 Import-Module (Join-Path $here 'Install-Engine.psm1') -Force
 Import-Module (Join-Path $here 'Install-Chrome.psm1') -Force
@@ -199,12 +200,14 @@ try { $appsEnabled = [bool]$settings.apps.enabled } catch { }
 if ($SkipApps -or -not $appsEnabled) {
     Write-Log "Apps phase skipped." -Level Info
 } else {
-    Write-Log "Apps phase: scanning peripherals..." -Level Info
+    Write-Log "Apps phase: scanning GPUs + peripherals..." -Level Info
     try {
         $devices = Get-Peripherals
-        $appMatches = Find-MatchingApps -Devices $devices
+        $gpuVendors = @(Get-GpuVendors)
+        if ($gpuVendors.Count -gt 0) { Write-Log "GPU vendor(s): $($gpuVendors -join ', ')" -Level Info }
+        $appMatches = Find-MatchingApps -Devices $devices -GpuVendors $gpuVendors
         if (@($appMatches).Count -eq 0) {
-            Write-Log "No catalog apps matched the detected peripherals." -Level Info
+            Write-Log "No catalog apps matched the detected hardware." -Level Info
         }
         foreach ($m in $appMatches) {
             Write-Log "App match: $($m.Name) ($($m.Reason))" -Level Info

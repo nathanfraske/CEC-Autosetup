@@ -34,20 +34,27 @@ function Get-AppCatalog {
 function Test-AppMatch {
     <#
         .SYNOPSIS
-        Returns a match reason string if any device matches the app's VID:PID list
-        or name patterns; otherwise $null.
+        Returns a match reason string if the app matches the detected hardware -
+        by GPU vendor, USB VID:PID, or device-name pattern; otherwise $null.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] $App,
-        [Parameter(Mandatory)][AllowEmptyCollection()] $Devices
+        [Parameter(Mandatory)][AllowEmptyCollection()] $Devices,
+        [string[]] $GpuVendors = @()
     )
 
     $vidpids = @()
     $patterns = @()
+    $gpuVendor = @()
     if ($App.match) {
         if ($App.match.PSObject.Properties['vidpid'] -and $App.match.vidpid) { $vidpids = @($App.match.vidpid) }
         if ($App.match.PSObject.Properties['namePatterns'] -and $App.match.namePatterns) { $patterns = @($App.match.namePatterns) }
+        if ($App.match.PSObject.Properties['gpuVendor'] -and $App.match.gpuVendor) { $gpuVendor = @($App.match.gpuVendor) }
+    }
+
+    foreach ($g in $gpuVendor) {
+        if ($GpuVendors -contains ([string]$g).ToLowerInvariant()) { return "GPU vendor '$g'" }
     }
 
     foreach ($d in $Devices) {
@@ -75,13 +82,14 @@ function Find-MatchingApps {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][AllowEmptyCollection()] $Devices,
-        $Catalog
+        $Catalog,
+        [string[]] $GpuVendors = @()
     )
     if (-not $Catalog) { $Catalog = Get-AppCatalog }
 
     $hits = New-Object System.Collections.Generic.List[object]
     foreach ($app in $Catalog) {
-        $reason = Test-AppMatch -App $app -Devices $Devices
+        $reason = Test-AppMatch -App $app -Devices $Devices -GpuVendors $GpuVendors
         if ($reason) {
             $hits.Add([pscustomobject]@{ App = $app; Name = $app.name; Reason = $reason }) | Out-Null
         }

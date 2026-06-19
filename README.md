@@ -107,16 +107,25 @@ codes), self-heals at runtime, and is regenerable via
 [`tools/Build-AsusMapping.ps1`](tools/Build-AsusMapping.ps1). See
 [`docs/vendor-contracts.md`](docs/vendor-contracts.md).
 
-## Apps phase (peripherals → software)
+## Apps phase (hardware → software)
 
-Detected via USB/PnP VID:PID and device names; installed via winget or the Chrome
-fallback. Defined in [`config/apps.json`](config/apps.json) — **add apps in JSON,
-not code.**
+Triggered by **GPU vendor** (`Win32_VideoController`), **USB/PnP VID:PID**, or
+device-name patterns; installed via winget or the Chrome fallback. Defined in
+[`config/apps.json`](config/apps.json) — **add apps in JSON, not code.**
 
 | App | Trigger | Install |
 | --- | --- | --- |
+| NVIDIA App | NVIDIA GPU (VEN_10DE) | winget `NVIDIA.app` (app then fetches the driver) |
+| AMD Software: Adrenalin Edition | AMD GPU (VEN_1002) | opens AMD drivers page (no winget; Adrenalin **installs the driver when run**) |
+| Intel Arc / Graphics Software | Intel GPU (VEN_8086) | opens Intel Arc/Graphics download page |
 | SignalRGB | common RGB peripherals (Corsair, Razer, Aura, …) | winget `WhirlwindFX.SignalRgb` |
 | Thermalright Control Center | TR cooler USB controllers / "Thermalright" devices | opens official download page (no winget package) |
+
+> **GPU driver note:** the GPU phase installs the *vendor app*, which carries the
+> driver. **AMD Adrenalin installs the GPU driver when run.** The **NVIDIA App**
+> and **Intel** software fetch/offer the latest driver (a fully-silent headless
+> driver install is a documented future option — NVIDIA exposes a driver-lookup
+> API; see [`docs/vendor-contracts.md`](docs/vendor-contracts.md)).
 
 ## Safety
 
@@ -138,6 +147,7 @@ src/
   Common.psm1            logging, HTTP, hashing, admin, settings
   Detect-Hardware.psm1   Win32_BaseBoard -> {vendor, model}
   Detect-Peripherals.psm1 USB/PnP enumeration for the apps phase
+  Detect-Gpu.psm1        Win32_VideoController -> GPU vendor (nvidia/amd/intel)
   Mapping.psm1           naming reconciliation + model->vendor cache (self-heal)
   Install-Engine.psm1    download -> verify -> extract -> pnputil/EXE install
   Install-Chrome.psm1    silent Chrome install + open-url fallback substrate

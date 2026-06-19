@@ -235,8 +235,40 @@ otherwise the **Chrome fallback** to the official download page.
 
 | App | winget id | Official page | Match |
 | --- | --- | --- | --- |
+| NVIDIA App | `NVIDIA.app` (verified) | `https://www.nvidia.com/en-us/software/nvidia-app/` | GPU vendor `nvidia` |
+| AMD Software: Adrenalin Edition | *(none)* | `https://www.amd.com/en/support/download/drivers.html` (HTTP 200) | GPU vendor `amd` |
+| Intel Arc / Graphics Software | *(none)* | `https://www.intel.com/content/www/us/en/download/785597/intel-arc-graphics-windows.html` | GPU vendor `intel` |
 | SignalRGB | `WhirlwindFX.SignalRgb` (verified) | `https://signalrgb.com/` | RGB peripheral name patterns |
 | Thermalright Control Center | *(none)* | `https://www.thermalright.com/support/download/` (HTTP 200) | TR cooler VID:PID + name |
+
+---
+
+## GPU drivers (vendor-app approach)
+
+Discrete/integrated GPUs are detected from `Win32_VideoController`'s PCI `VEN_` id
+(`10DE` = NVIDIA, `1002` = AMD, `8086` = Intel; `src/Detect-Gpu.psm1`). Rather
+than resolve each driver, the apps phase installs the **vendor app**, which
+carries the driver:
+
+- **AMD** → AMD Software: Adrenalin Edition. The installer **is** the driver
+  package, so running it installs the GPU driver. (No winget package as of
+  2026-06-19 → Chrome fallback to the AMD drivers page.)
+- **NVIDIA** → NVIDIA App (winget `NVIDIA.app`, verified). Installs silently; the
+  app then downloads the latest Game Ready / Studio driver. It does **not** fully
+  auto-install the driver unattended.
+- **Intel** → Intel Arc / Graphics software (ships with the driver; no standalone
+  winget → Chrome fallback to the Intel Arc/Graphics download page).
+
+**Future option (verified, not yet built):** NVIDIA exposes a headless driver
+lookup that returns the exact driver `.exe` for a fully-silent install, so the
+NVIDIA path could be made unattended later:
+- `https://www.nvidia.com/Download/API/lookupValueSearch.aspx?TypeID=3` →
+  products with `pfid` (Value) + series `psid` (ParentID).
+- `https://gfwsl.geforce.com/services_toolkit/services/com/nvidia/services/AjaxDriverService.php?func=DriverManualLookup&psid={psid}&pfid={pfid}&osID=57&dch=1`
+  → `IDS[0].downloadInfo.{Version,DownloadURL}` (a `.exe` on
+  `us.download.nvidia.com`; verified 2026-06-19, returned 596.72). `osID=57` =
+  Windows 11 64-bit. Silent install: `<driver>.exe -s -noreboot`. AMD/Intel have
+  no comparable clean headless API (bot-walled) → they stay app/Chrome-fallback.
 
 ---
 

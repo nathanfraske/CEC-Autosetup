@@ -1,5 +1,5 @@
 {
-  "_comment": "Peripheral-software catalog. Each app installs only when a matching device is detected on the machine. Primary install path is winget (resolves the real vendor installer); when no winget package exists the app falls back to opening the official download page in Chrome, exactly like the ASRock driver path. Add new apps here without touching code. See docs/architecture.md (Apps layer) and docs/vendor-contracts.md (Open items).",
+  "_comment": "Hardware-triggered software catalog. Each app installs only when matching hardware is detected: a GPU vendor (match.gpuVendor: nvidia|amd|intel), a USB VID:PID (match.vidpid), or a device-name pattern (match.namePatterns). Primary install path is winget (resolves the real vendor installer); when no winget package exists the app falls back to opening the official download page in Chrome, exactly like the ASRock driver path. Add apps here without touching code. See docs/architecture.md (Apps layer) and docs/vendor-contracts.md (Open items).",
   "apps": [
     {
       "name": "SignalRGB",
@@ -48,6 +48,27 @@
         ]
       },
       "notes": "No winget package as of 2026-06-19; opens the official download page in Chrome. VID:PID list is community-sourced from the thermalright-trcc-linux project (HID LCD/LED, SCSI, bulk controllers) and should be confirmed against official hardware. See docs/vendor-contracts.md Open items."
+    },
+    {
+      "name": "NVIDIA App",
+      "wingetId": "NVIDIA.app",
+      "fallbackUrl": "https://www.nvidia.com/en-us/software/nvidia-app/",
+      "match": { "gpuVendor": ["nvidia"] },
+      "notes": "winget id NVIDIA.app verified 2026-06-19. Installs the NVIDIA App silently; the app then downloads the latest Game Ready / Studio driver (does NOT fully auto-install the driver unattended - a future headless driver path could add that; see docs/vendor-contracts.md GPU)."
+    },
+    {
+      "name": "AMD Software: Adrenalin Edition",
+      "wingetId": null,
+      "fallbackUrl": "https://www.amd.com/en/support/download/drivers.html",
+      "match": { "gpuVendor": ["amd"] },
+      "notes": "Not on winget as of 2026-06-19; opens the AMD drivers page in Chrome. The Adrenalin installer IS the driver package - running it installs the GPU driver."
+    },
+    {
+      "name": "Intel Arc / Graphics Software",
+      "wingetId": null,
+      "fallbackUrl": "https://www.intel.com/content/www/us/en/download/785597/intel-arc-graphics-windows.html",
+      "match": { "gpuVendor": ["intel"] },
+      "notes": "No standalone winget package (Arc Control ships with the graphics driver); opens the Intel Arc/Graphics Windows download page in Chrome. Triggers on Intel iGPU/Arc."
     }
   ]
 }
