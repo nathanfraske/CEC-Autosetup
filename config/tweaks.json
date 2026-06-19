@@ -1,0 +1,13 @@
+{
+  "_comment": "Post-setup provisioning, applied by the tweaks phase (skip with -SkipTweaks; honors -WhatIf). Toggles are best-effort and idempotent. NOTE: on Windows 11 the taskbar pin and default-browser association are most reliable when applied during imaging/OOBE (they affect new user profiles); see docs/provisioning.md. Steam and other baseline apps live in config/apps.json (match.always).",
+  "setChromeDefaultBrowser": true,
+  "pinChromeToTaskbar": true,
+  "disableOneDriveStartup": true,
+  "disableCopilot": true,
+  "wallpaper": {
+    "enabled": true,
+    "defaultTier": null,
+    "tiersPath": "config/tiers.json",
+    "wallpaperDir": "wallpapers"
+  }
+}

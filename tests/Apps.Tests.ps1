@@ -57,10 +57,11 @@ Describe 'Apps: matching' {
         ($hits.Name) | Should -Contain 'Thermalright Control Center'
     }
 
-    It 'matches nothing for an unrelated device' {
+    It 'triggers no hardware-specific app for an unrelated device (baseline apps still match)' {
         $devices = Get-Peripherals -Devices @(
             [pscustomobject]@{ Name = 'Standard NVMe Controller'; DeviceID = 'PCI\VEN_8086'; PNPClass = 'SCSIAdapter'; Manufacturer = 'Intel' }
         )
-        @(Find-MatchingApps -Devices $devices).Count | Should -Be 0
+        $hits = Find-MatchingApps -Devices $devices -GpuVendors @()
+        @($hits | Where-Object { $_.Reason -notmatch 'baseline' }).Count | Should -Be 0
     }
 }

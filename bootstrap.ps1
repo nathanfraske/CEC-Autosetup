@@ -15,6 +15,9 @@ param(
     [string[]] $Categories,
     [int]      $Osid = 0,
     [switch]   $SkipApps,
+    [switch]   $SkipGpu,
+    [switch]   $SkipTweaks,
+    [string]   $Tier,
     [string]   $Model,
     [string]   $Vendor,
     [string]   $Repo,                # owner/name override (default below)

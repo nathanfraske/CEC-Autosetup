@@ -69,6 +69,13 @@
       "fallbackUrl": "https://www.intel.com/content/www/us/en/download/785597/intel-arc-graphics-windows.html",
       "match": { "gpuVendor": ["intel"] },
       "notes": "No standalone winget package (Arc Control ships with the graphics driver); opens the Intel Arc/Graphics Windows download page in Chrome. Triggers on Intel iGPU/Arc."
+    },
+    {
+      "name": "Steam",
+      "wingetId": "Valve.Steam",
+      "fallbackUrl": "https://store.steampowered.com/about/",
+      "match": { "always": true },
+      "notes": "Baseline app installed on every build (match.always). winget id Valve.Steam."
     }
   ]
 }

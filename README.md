@@ -83,8 +83,10 @@ See [`docs/autounattend.md`](docs/autounattend.md) to wire this into
 | `-IncludeBios` | List BIOS entries. **Never flashes** — listing only. |
 | `-Categories a,b` | Explicit category allow-list (default: skip pure utilities). |
 | `-Osid <int>` | ASUS `osid` override (default: probe candidates). |
-| `-SkipApps` | Skip the apps phase (GPU vendor apps + peripheral software). |
+| `-SkipApps` | Skip the apps phase (GPU vendor apps + peripheral + baseline software). |
 | `-SkipGpu` | Skip the NVIDIA headless GPU-driver install. |
+| `-SkipTweaks` | Skip the provisioning phase (default browser, taskbar, OneDrive/Copilot, wallpaper). |
+| `-Tier <name>` | Ship tier → wallpaper (e.g. `-Tier flagship`); see [provisioning](docs/provisioning.md). |
 | `-Model` / `-Vendor` | Override hardware detection (testing / odd boards). |
 
 ## Supported boards
@@ -124,6 +126,7 @@ device-name patterns; installed via winget or the Chrome fallback. Defined in
 | Intel Arc / Graphics Software | Intel GPU (VEN_8086) | opens Intel Arc/Graphics download page |
 | SignalRGB | common RGB peripherals (Corsair, Razer, Aura, …) | winget `WhirlwindFX.SignalRgb` |
 | Thermalright Control Center | TR cooler USB controllers / "Thermalright" devices | opens official download page (no winget package) |
+| Steam | baseline (`match.always` — every build) | winget `Valve.Steam` |
 
 > **GPU drivers:** **NVIDIA is fully unattended** — the GPU phase resolves the
 > exact driver via NVIDIA's lookup API and silent-installs it (`-s -noreboot`),
@@ -132,6 +135,22 @@ device-name patterns; installed via winget or the Chrome fallback. Defined in
 > handled (no iGPU-vs-dGPU guessing), so mixed setups (e.g. Intel iGPU + NVIDIA
 > dGPU, AMD iGPU + Intel Arc) all get each vendor's driver. `-SkipGpu` skips the
 > NVIDIA headless driver step.
+
+## Provisioning (tweaks phase)
+
+After drivers/GPU/apps, a **provisioning phase** applies shop tweaks (skip with
+`-SkipTweaks`; honors `-WhatIf`), driven by [`config/tweaks.json`](config/tweaks.json):
+
+- Set **Chrome as the default browser** (DISM default app associations).
+- **Pin Chrome to the taskbar** (taskbar `LayoutModification.xml`).
+- **Disable OneDrive** from startup and **disable Windows Copilot**.
+- Set a **wallpaper by ship tier** — `-Tier <name>` → image from
+  [`config/tiers.json`](config/tiers.json) (drop artwork in `wallpapers/`).
+
+> The default-browser and taskbar-pin tweaks are most reliable applied during
+> imaging/OOBE (they configure new user profiles). See
+> [`docs/provisioning.md`](docs/provisioning.md) for the caveats and the
+> `SetupComplete.cmd` route.
 
 ## Safety
 
@@ -155,15 +174,18 @@ src/
   Detect-Peripherals.psm1 USB/PnP enumeration for the apps phase
   Detect-Gpu.psm1        Win32_VideoController -> GPU vendor (nvidia/amd/intel)
   Install-Gpu.psm1       NVIDIA headless driver lookup + silent install
+  Tweaks.psm1            provisioning: default browser, taskbar, OneDrive/Copilot, wallpaper
   Mapping.psm1           naming reconciliation + model->vendor cache (self-heal)
   Install-Engine.psm1    download -> verify -> extract -> pnputil/EXE install
   Install-Chrome.psm1    silent Chrome install + open-url fallback substrate
   providers/             Asus / Msi / Gigabyte / Asrock + the provider contract
   apps/AppCatalog.psm1   peripheral -> software matching + install
-config/                  defaults.json, apps.json, mapping.json, msi-codes.json
+config/                  defaults.json, apps.json, mapping.json, msi-codes.json,
+                         tweaks.json (provisioning), tiers.json (wallpaper tiers)
+wallpapers/              per-tier wallpaper images (you supply; shipped on the USB)
 tools/                   Build-AsusMapping.ps1 (catalog refresh), Test-VendorCanary.ps1
                          (live early-warning), Get-DeviceIds.ps1 (capture VID:PIDs)
-docs/                    vendor contracts, architecture, autounattend, adding a provider
+docs/                    vendor contracts, architecture, autounattend, provisioning, adding a provider
 tests/                   offline Pester suite + recorded fixtures
 .github/workflows/       ci.yml (offline lint+test), refresh-mapping.yml (network-gated)
 ```

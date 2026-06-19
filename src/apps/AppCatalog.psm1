@@ -48,6 +48,7 @@ function Test-AppMatch {
     $patterns = @()
     $gpuVendor = @()
     if ($App.match) {
+        if ($App.match.PSObject.Properties['always'] -and $App.match.always) { return 'baseline (always)' }
         if ($App.match.PSObject.Properties['vidpid'] -and $App.match.vidpid) { $vidpids = @($App.match.vidpid) }
         if ($App.match.PSObject.Properties['namePatterns'] -and $App.match.namePatterns) { $patterns = @($App.match.namePatterns) }
         if ($App.match.PSObject.Properties['gpuVendor'] -and $App.match.gpuVendor) { $gpuVendor = @($App.match.gpuVendor) }

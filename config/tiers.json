@@ -1,0 +1,9 @@
+{
+  "_comment": "Build/ship tier -> wallpaper file (relative to the wallpaperDir, default 'wallpapers/'). Select the tier with -Tier <name> (or wallpaper.defaultTier in tweaks.json). Drop the matching images into wallpapers/. These tier names are EXAMPLES - rename to match your product selection.",
+  "tiers": {
+    "tier1": "tier1.jpg",
+    "tier2": "tier2.jpg",
+    "tier3": "tier3.jpg",
+    "flagship": "flagship.jpg"
+  }
+}

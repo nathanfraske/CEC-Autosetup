@@ -20,6 +20,8 @@ param(
     [int]      $Osid = 0,
     [switch]   $SkipApps,
     [switch]   $SkipGpu,
+    [switch]   $SkipTweaks,
+    [string]   $Tier,
     [string]   $Model,
     [string]   $Vendor
 )
@@ -35,6 +37,7 @@ Import-Module (Join-Path $here 'Install-Gpu.psm1') -Force
 Import-Module (Join-Path $here 'Mapping.psm1') -Force
 Import-Module (Join-Path $here 'Install-Engine.psm1') -Force
 Import-Module (Join-Path $here 'Install-Chrome.psm1') -Force
+Import-Module (Join-Path $here 'Tweaks.psm1') -Force
 Import-Module (Join-Path $here 'providers/Provider.psm1') -Force
 Import-Module (Join-Path $here 'apps/AppCatalog.psm1') -Force
 
@@ -258,6 +261,14 @@ if ($SkipApps -or -not $appsEnabled) {
     } catch {
         Write-Log "Apps phase error: $($_.Exception.Message)" -Level Warn
     }
+}
+
+# --- tweaks / provisioning phase -----------------------------------------
+if ($SkipTweaks) {
+    Write-Log "Tweaks phase skipped (-SkipTweaks)." -Level Info
+} else {
+    Write-Log "Tweaks phase: applying provisioning (default browser, taskbar, OneDrive/Copilot, wallpaper)..." -Level Info
+    try { Invoke-Tweaks -Tier $Tier } catch { Write-Log "Tweaks phase error: $($_.Exception.Message)" -Level Warn }
 }
 
 # --- summary -------------------------------------------------------------
