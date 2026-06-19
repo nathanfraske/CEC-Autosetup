@@ -14,6 +14,9 @@ src/FirstBoot.ps1  (orchestrator)
    │
    ├─ Detect-Hardware.psm1 ── Win32_BaseBoard ──▶ { Vendor, Model }
    │
+   ├─ Mapping.psm1 ── normalize + lookup (config/mapping.json + cache) ──▶ catalog model + slug
+   │        (MSI MS-xxxx codes via config/msi-codes.json; self-heals on success)
+   │
    ├─ providers/Provider.psm1 ── Get-Provider $Vendor ──▶ provider object
    │        │
    │        ├─ Resolve-Product(Model)      ─▶ identity (or $null)
@@ -94,6 +97,27 @@ The apps layer mirrors the driver fallback philosophy for peripheral software:
    driver vendor.
 
 Apps are **data-driven**: add entries to `config/apps.json`, no code change.
+
+## Mapping layer (naming reconciliation)
+
+`Mapping.psm1` bridges the gap between the SMBIOS `Product` string and what each
+vendor's fetch needs:
+
+- `Get-NormalizedModelKey` — lower-case, drop a trailing parenthetical board
+  code, collapse punctuation.
+- `Get-Mapping` — merges the shipped `config/mapping.json` with a writable
+  runtime cache at `%ProgramData%\firstboot\mapping.cache.json` (cache wins).
+- `Find-MappingEntry` — exact-normalized lookup, then a conservative containment
+  fuzzy match. A hit supplies the catalog model and the vendor **slug** (the
+  Gigabyte revision slug is not derivable from SMBIOS).
+- `Save-MappingEntry` — best-effort write-back so the cache self-heals after a
+  successful live resolve (never throws on a read-only medium).
+
+The orchestrator also maps MSI `MS-xxxx` board codes via `config/msi-codes.json`.
+ASUS rows are regenerable from the 897-board catalog with
+`tools/Build-AsusMapping.ps1` (network-gated; not part of offline CI). The
+mapping is a cache + reconciliation layer, **not** a hard dependency — with no
+mapping at all, ASUS/MSI still resolve from the model name/slug.
 
 ## Logging
 

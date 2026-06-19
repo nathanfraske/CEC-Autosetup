@@ -62,15 +62,39 @@ function Get-AsusProductIdFromPdInfo {
     return $null
 }
 
+function Get-AsusPdInfo {
+    <#
+        .SYNOPSIS
+        Parses a PDInfo body into { ProductID; Pdhashedid; Name }, or $null when
+        there is no resolvable product. Pdhashedid is present only on newer boards;
+        Name is the canonical catalog name (may be null on older boards).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string] $JsonText)
+
+    try { $json = $JsonText | ConvertFrom-Json } catch { return $null }
+    $result    = Get-PropValue $json 'Result'
+    $productId = Get-PropValue $result 'ProductID'
+    $hasId     = ($null -ne $productId -and "$productId" -ne '' -and [int]$productId -gt 0)
+    if (-not $hasId) { return $null }
+
+    return [pscustomobject]@{
+        ProductID  = [int]$productId
+        Pdhashedid = [string](Get-PropValue $result 'Pdhashedid')
+        Name       = [string](Get-PropValue $result 'Name')
+    }
+}
+
 function Resolve-AsusProduct {
     <#
         .SYNOPSIS
-        Resolves a board model to an ASUS identity { ProductID; SeriesPath; ... }
-        by trying series-slug candidates against PDInfo. Returns $null if none
-        resolve.
+        Resolves a board model to an ASUS identity. PDInfo enrichment (canonical
+        Name + Pdhashedid + ProductID) is attempted across series-slug candidates,
+        but ASUS drivers resolve from the model name alone, so this ALWAYS returns
+        an identity (falling back to the raw model with an empty Pdhashedid).
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string] $Model)
+    param([Parameter(Mandatory)][string] $Model, [string] $Slug)   # $Slug ignored (uniform contract)
 
     $s = Get-Settings
     $modelSlug  = Get-AsusModelSlug -Model $Model
@@ -85,20 +109,33 @@ function Resolve-AsusProduct {
             Write-Log "ASUS PDInfo request failed for series '$series': $($_.Exception.Message)" -Level Warn
             continue
         }
-        $productId = Get-AsusProductIdFromPdInfo -JsonText $body
-        if ($productId) {
-            Write-Log "ASUS resolved '$Model' -> series '$series', ProductID $productId" -Level Success
+        $pd = Get-AsusPdInfo -JsonText $body
+        if ($pd) {
+            $name = if ($pd.Name) { $pd.Name } else { $Model }
+            Write-Log "ASUS resolved '$Model' -> series '$series', ProductID $($pd.ProductID)$(if($pd.Pdhashedid){" (pdhashedid $($pd.Pdhashedid))"})" -Level Success
             return [pscustomobject]@{
                 Vendor     = 'asus'
                 Model      = $Model
+                Name       = $name
                 ModelSlug  = $modelSlug
                 SeriesPath = $series
-                ProductID  = $productId
+                ProductID  = $pd.ProductID
+                Pdhashedid = $pd.Pdhashedid
             }
         }
     }
-    Write-Log "ASUS could not resolve a ProductID for '$Model' (tried: $($candidates -join ', '))" -Level Warn
-    return $null
+
+    # No PDInfo hit: the model-keyed driver call still works from the name alone.
+    Write-Log "ASUS PDInfo did not resolve '$Model'; will fetch drivers by model name (empty pdhashedid)." -Level Warn
+    return [pscustomobject]@{
+        Vendor     = 'asus'
+        Model      = $Model
+        Name       = $Model
+        ModelSlug  = $modelSlug
+        SeriesPath = $null
+        ProductID  = $null
+        Pdhashedid = ''
+    }
 }
 
 function ConvertFrom-AsusDriverJson {
@@ -159,15 +196,21 @@ function Get-AsusDriverList {
     )
 
     $s = Get-Settings
-    $pdid = $Identity.ProductID
+    # Version-agnostic contract: key on model name + pdhashedid, NEVER pdid.
+    # pdid breaks newer boards (Z890/X870E) with "Input string was not in a
+    # correct format"; the model-keyed call works across all generations.
+    $modelName = if ($Identity.Name) { $Identity.Name } else { $Identity.Model }
+    $hash = if ($Identity.Pdhashedid) { $Identity.Pdhashedid } else { '' }
+    $encModel = [uri]::EscapeDataString([string]$modelName)
+    $encHash  = [uri]::EscapeDataString([string]$hash)
 
     $osidsToTry = if ($Osid -gt 0) { @($Osid) } else { @($s.asus.osidCandidates) }
 
     $best = $null
     $bestOsid = 0
     foreach ($osid in $osidsToTry) {
-        $url = ('{0}?pdid={1}&website={2}&systemCode={3}&osid={4}' -f `
-            $s.asus.driversBase, $pdid, $s.asus.websiteCode, $s.asus.systemCode, $osid)
+        $url = ('{0}?website={1}&model={2}&pdhashedid={3}&cpu=&osid={4}' -f `
+            $s.asus.driversBase, $s.asus.websiteCode, $encModel, $encHash, $osid)
         try {
             $body = Invoke-Http -Url $url -Headers @{ 'Content-Type' = 'text/plain' }
         } catch {
@@ -185,7 +228,7 @@ function Get-AsusDriverList {
     }
 
     if (-not $best) {
-        throw "ASUS returned no drivers for ProductID $pdid (tried osid: $($osidsToTry -join ', '))."
+        throw "ASUS returned no drivers for '$modelName' (tried osid: $($osidsToTry -join ', '))."
     }
     Write-Log "ASUS selected osid=$bestOsid with $(@($best).Count) driver file(s)" -Level Success
     return $best
@@ -211,5 +254,5 @@ function Get-AsusProvider {
 
 Export-ModuleMember -Function `
     Get-AsusModelSlug, Get-AsusSeriesCandidates, Get-AsusProductIdFromPdInfo, `
-    Resolve-AsusProduct, ConvertFrom-AsusDriverJson, Get-AsusDriverList, `
-    Get-AsusFallbackUrl, Get-AsusProvider
+    Get-AsusPdInfo, Resolve-AsusProduct, ConvertFrom-AsusDriverJson, `
+    Get-AsusDriverList, Get-AsusFallbackUrl, Get-AsusProvider

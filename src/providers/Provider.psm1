@@ -26,6 +26,7 @@ Set-StrictMode -Version Latest
 
 $script:Registry = @{
     asus     = @{ Module = 'Asus.psm1';     Factory = 'Get-AsusProvider' }
+    msi      = @{ Module = 'Msi.psm1';      Factory = 'Get-MsiProvider' }
     gigabyte = @{ Module = 'Gigabyte.psm1'; Factory = 'Get-GigabyteProvider' }
     asrock   = @{ Module = 'Asrock.psm1';   Factory = 'Get-AsrockProvider' }
 }

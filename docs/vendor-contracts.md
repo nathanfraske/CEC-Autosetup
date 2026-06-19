@@ -47,17 +47,29 @@ GET https://odinapi.asus.com/recent-data/apiv2/PDInfo
   tokens of `modelSlug`; accept the first that returns a non-null
   `Result.ProductID`.
 - `WebsiteCode` **must** be `global`. `us` returns nulls.
+- Returns `Result.ProductID`, `Result.Pdhashedid` (string, newer boards only),
+  and `Result.Name` (canonical catalog name; may be null on older boards).
 
-### Step 2 — driver list
+### Step 2 — driver list (version-agnostic, keyed on model name)
 
 ```
 GET https://www.asus.com/support/webapi/ProductV2/GetPDDrivers
-    ?pdid={ProductID}&website=global&systemCode=asus&osid={osid}
+    ?website=global&model={name}&pdhashedid={hash-or-empty}&cpu=&osid={osid}
 ```
 
-- **Exactly** these four params. Adding empty `model=` / `cpu=` / `LevelTagId=`
-  makes it return `Status=FAIL` (`傳入參數不正確`).
 - Send header `Content-Type: text/plain`.
+- **CRITICAL CORRECTION over the original runbook.** Do **not** send `pdid`. The
+  legacy `pdid={ProductID}&systemCode=asus` shape works only for older products;
+  newer boards (Z890 / X870E and current gen) throw
+  `Input string was not in a correct format` when `pdid` is present. The
+  model-keyed call works across all generations. Verified 2026-06-19:
+  - Z890 model-keyed → `SUCCESS`, 59 files; Z890 legacy `pdid` → `FAIL "Input
+    string was not in a correct format."`
+  - Z490 model-keyed → `SUCCESS`, 25 files (same as legacy).
+- `pdhashedid`: pass `Result.Pdhashedid` from PDInfo when present, empty
+  otherwise. The endpoint falls back to model-name resolution, so an empty hash on
+  an older board still returns its drivers. Because of this, `Resolve-Product`
+  always returns an identity (drivers resolve from the name alone).
 
 ### Step 3 — parse
 
@@ -72,15 +84,67 @@ category are newest-first.
   list in `config/defaults.json` (`asus.osidCandidates`) and keeps whichever
   returns the most files.
 
-**Known-good vector (re-verified 2026-06-19):** model `ROG STRIX Z490-I GAMING`
-→ series `rog-strix-z490` → **ProductID 14684**; `osid=52` → `Status=SUCCESS`,
-`Count=25`. Recorded in `tests/fixtures/asus_pdinfo.json` and
-`tests/fixtures/asus_getpddrivers.json`. CDN spot check:
-`https://dlcdnets.asus.com/pub/ASUS/mb/03CHIPSET/DRV_MEI_Intel_Cons_TP_W11_64_V2334510_20230920R.zip`
-→ HTTP 200, `application/zip`.
+**Enumeration — one call returns the whole catalog:**
+```
+GET https://odinapi.asus.com/recent-data/apiv2/SeriesFilterResult
+    ?SystemCode=asus&WebsiteCode=global
+    &ProductLevel1Code=Motherboards-Components&ProductLevel2Code=Motherboards
+```
+`Result.ProductList` = **897 boards** (verified 2026-06-19). Per entry:
+`SalesModelName`/`CategoryName` (model), `ProductURL` (append
+`helpdesk_download/` for the download page), `ProductHashedID`, `RealProductID`.
+ROG boards carry `rog.asus.com` URLs, mainstream `www.asus.com`. Used by
+`tools/Build-AsusMapping.ps1` to regenerate ASUS mapping rows.
+
+**Known-good vectors (re-verified 2026-06-19):**
+- `ROG STRIX Z490-I GAMING` → ProductID **14684**; model-keyed `osid=52` →
+  `SUCCESS`, **25** files. Recorded in `tests/fixtures/asus_pdinfo.json` +
+  `tests/fixtures/asus_getpddrivers.json`. CDN spot check:
+  `…/mb/03CHIPSET/DRV_MEI_Intel_Cons_TP_W11_64_V2334510_20230920R.zip` → HTTP 200.
+- `TUF GAMING Z890-PLUS WIFI` → ProductID 29693, Pdhashedid `snrwk900sg1paule`;
+  model-keyed `osid=52` → `SUCCESS`, **59** files. PDInfo recorded in
+  `tests/fixtures/asus_pdinfo_z890.json`.
 
 **Fallback URL:** `https://www.asus.com/supportonly/{model}/helpdesk_download/`
 (verified to return the model's download page).
+
+---
+
+## MSI — internal JSON API, keyed on model slug (headless OK, mind Akamai) ✅
+
+A clean JSON API like ASUS, but keyed on the **model slug** (model name with
+non-alphanumerics → hyphens, case preserved, e.g. `MAG B650 TOMAHAWK WIFI` →
+`MAG-B650-TOMAHAWK-WIFI`). The slug is constructible from the name, so no catalog
+lookup is strictly required. All endpoints under
+`https://www.msi.com/api/v1/product/support/`, keyed on `product={slug}`:
+
+```
+GET …/os?product={slug}&type=driver               # -> result[] of OS strings
+GET …/panel?product={slug}&type=driver&os=Win11 64 # -> result.downloads
+```
+
+- **OS values are exact strings** (`"Win11 64"`, `"Win10 64"`), not "Windows 11".
+  Default to `Win11 64`, fall back to `Win10 64`. The `os` query param is
+  **required** or `downloads` comes back `false`.
+- **`panel` parse:** `result.downloads` is a dict whose keys are category names
+  (`System & Chipset Drivers`, `LAN Drivers`, …), each a list, **plus metadata
+  keys `type_title` and `os` which must be skipped.** Each entry:
+  `download_title`, `download_version`, `download_release`, `download_size`,
+  `download_sha256` (format `SHA-256:<hex>` with a trailing `<br>` — extract the
+  64-hex), `download_url`, `os[]`.
+- **Headless: yes, but Akamai.** `www.msi.com` returns `Access Denied` to bare
+  requests; passes with a full browser header set **+ a `Referer` of the product
+  support page**. A sudden `Access Denied` mid-run is throttling, not a contract
+  change — back off.
+- **CDN:** `download.msi.com` 302-redirects to a numbered mirror
+  (`download-2.msi.com`); follow redirects. SHA-256 is present on every file.
+- Do **not** pass `product_id` (500s). Key on the slug.
+
+**Known-good vector (verified 2026-06-19):** `MAG B650 TOMAHAWK WIFI` (slug
+`MAG-B650-TOMAHAWK-WIFI`), `type=driver`, `os=Win11 64` → System & Chipset = AMD
+Chipset Driver 7.12.04.858; `download.msi.com/dvr_exe/mb/amd_chipset_drivers_am4_am5.zip`
+→ 302 → `download-2.msi.com`, HTTP 200. Recorded in `tests/fixtures/msi_os.json`
+and `tests/fixtures/msi_panel.json`.
 
 ---
 
@@ -176,24 +240,51 @@ otherwise the **Chrome fallback** to the official download page.
 
 ---
 
-## 8. Open items (do not silently resolve)
+## Mapping & naming reconciliation
+
+The SMBIOS `Win32_BaseBoard.Product` string is the input; the vendor's
+catalog/slug name is what the fetch needs, and they do not always match (ASUS
+suffix drift, Gigabyte rev-slugs, MSI `MS-xxxx` board codes). The lookup layer
+(`src/Mapping.psm1`):
+
+1. Normalizes (case, punctuation, drops a trailing parenthetical board code).
+2. Looks up `config/mapping.json` (shipped seed) overlaid by
+   `%ProgramData%\firstboot\mapping.cache.json` (runtime self-heal) — exact, then
+   a conservative containment fuzzy match.
+3. On a hit, supplies the catalog model and the vendor slug (notably the
+   Gigabyte rev-slug, which is **not** derivable from SMBIOS).
+4. On a miss, resolves live (ASUS/MSI from the name/slug) and writes the result
+   back so the table self-heals.
+
+MSI `MS-xxxx` codes map via `config/msi-codes.json` (verified data only). ASUS
+rows are regenerable from the 897-board catalog via `tools/Build-AsusMapping.ps1`;
+the shipped seed is kept small for portability.
+
+---
+
+## Open items (do not silently resolve)
 
 1. **ASRock driver XHR endpoint** — not captured. Needs a real browser / DevTools
    session (or Claude-in-Chrome) to record. Until then ASRock is fallback-only.
    See `TODO(asrock-xhr)` in `src/providers/Asrock.psm1`.
-2. **Per-board ASUS `osid`** — `52` covers current Intel desktop boards;
-   AMD/other-OS boards may differ. The probe in `Get-AsusDriverList` mitigates
-   this, but the candidate list (`config/defaults.json`) is best-effort.
-3. **EXE silent-install coverage** — packer flags are best-effort. Grow the map
+2. **Per-board ASUS `osid`** — `52` covers current Intel/AMD desktop boards;
+   exotic boards or other OSes may differ. The probe in `Get-AsusDriverList`
+   mitigates this, but the candidate list (`config/defaults.json`) is best-effort.
+3. **MSI / Gigabyte Akamai throttling** — both `www` hosts are Akamai-fronted.
+   Keep request pacing conservative; treat a sudden `Access Denied` as throttling.
+4. **MSI `MS-xxxx` code map** — `config/msi-codes.json` ships empty. Populate from
+   MSI product pages (verified) so code-reporting boards resolve instead of
+   falling back.
+5. **EXE silent-install coverage** — packer flags are best-effort. Grow the map
    from the real packages the shop encounters.
-4. **Thermalright VID:PID list** — the values in `config/apps.json` are
+6. **Thermalright VID:PID list** — the values in `config/apps.json` are
    **community-sourced** from the `thermalright-trcc-linux` project (HID LCD/LED,
    SCSI, bulk controllers). Confirm against official hardware; treat as a starting
    point, not authoritative.
-5. **Code signing / SmartScreen** — running an unsigned `bootstrap.ps1` internally
+7. **Code signing / SmartScreen** — running an unsigned `bootstrap.ps1` internally
    is fine; sign it if distributed.
-6. **Vendor brittleness** — these are undocumented endpoints/markup. Consider a
+8. **Vendor brittleness** — these are undocumented endpoints/markup. Consider a
    network-gated CI canary that flags when a live call starts returning FAIL or a
    challenge, separate from the offline unit suite.
-7. **Copyright holder** — `NOTICE` and SPDX headers use "CEC-Autosetep
+9. **Copyright holder** — `NOTICE` and SPDX headers use "CEC-Autosetep
    contributors". Confirm the exact string before a public release.

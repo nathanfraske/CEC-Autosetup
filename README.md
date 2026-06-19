@@ -86,15 +86,26 @@ See [`docs/autounattend.md`](docs/autounattend.md) to wire this into
 
 ## Supported boards
 
-| Vendor | Method | Headless | Verified live vector (2026-06-19) |
-| --- | --- | --- | --- |
-| **ASUS** | internal JSON API (`PDInfo` → `GetPDDrivers`) | ✅ | `ROG STRIX Z490-I GAMING` → ProductID **14684**, `osid=52` → **25** files |
-| **Gigabyte** | server-rendered support HTML | ✅ (mind Akamai) | `B650-GAMING-X-AX-V2-rev-10-11-12` → **15** components; chipset `8.03.25.247` |
-| **ASRock** | browser-required (Incapsula + XHR) | ⚠️ fallback-only | `X870E Taichi` → opens `…/mb/AMD/X870E%20Taichi/index.asp#Download` |
+| Vendor | Method | Keyed on | Headless | Verified live vector (2026-06-19) |
+| --- | --- | --- | --- | --- |
+| **ASUS** | internal JSON API (`PDInfo` → `GetPDDrivers`, **model-keyed**) | model name | ✅ | `ROG STRIX Z490-I GAMING` → **25** files; `TUF GAMING Z890-PLUS WIFI` → **59** files |
+| **MSI** | internal JSON API (`os`/`panel`) | model slug | ✅ (mind Akamai) | `MAG B650 TOMAHAWK WIFI` → AMD Chipset `7.12.04.858`, SHA-256 on every file |
+| **Gigabyte** | server-rendered support HTML | URL slug w/ revision | ✅ (mind Akamai) | `B650-GAMING-X-AX-V2-rev-10-11-12` → **15** components; chipset `8.03.25.247` |
+| **ASRock** | browser-required (Incapsula + XHR) | constructed URL | ⚠️ fallback-only | `X870E Taichi` → opens `…/mb/AMD/X870E%20Taichi/index.asp#Download` |
+
+> **ASUS is model-keyed, not `pdid`-keyed.** Sending the legacy `pdid` breaks
+> current-gen boards (Z890/X870E); CEC-Autosetep keys on the model name +
+> `pdhashedid`, which works across all generations.
 
 ASRock is **fallback-only**: the driver list loads via an undocumented
 client-side XHR that has not been captured. CEC-Autosetep opens the correct
-ASRock page in Chrome instead. See [`docs/vendor-contracts.md`](docs/vendor-contracts.md).
+ASRock page in Chrome instead.
+
+A small **mapping table** (`config/mapping.json`) reconciles SMBIOS names to
+catalog names/slugs (notably the Gigabyte revision slug and MSI `MS-xxxx`
+codes), self-heals at runtime, and is regenerable via
+[`tools/Build-AsusMapping.ps1`](tools/Build-AsusMapping.ps1). See
+[`docs/vendor-contracts.md`](docs/vendor-contracts.md).
 
 ## Apps phase (peripherals → software)
 
@@ -127,11 +138,13 @@ src/
   Common.psm1            logging, HTTP, hashing, admin, settings
   Detect-Hardware.psm1   Win32_BaseBoard -> {vendor, model}
   Detect-Peripherals.psm1 USB/PnP enumeration for the apps phase
+  Mapping.psm1           naming reconciliation + model->vendor cache (self-heal)
   Install-Engine.psm1    download -> verify -> extract -> pnputil/EXE install
   Install-Chrome.psm1    silent Chrome install + open-url fallback substrate
-  providers/             Asus / Gigabyte / Asrock + the provider contract
+  providers/             Asus / Msi / Gigabyte / Asrock + the provider contract
   apps/AppCatalog.psm1   peripheral -> software matching + install
-config/                  defaults.json (osid hints, deny-list, timeouts), apps.json
+config/                  defaults.json, apps.json, mapping.json, msi-codes.json
+tools/Build-AsusMapping.ps1  regenerate ASUS mapping rows from the catalog
 docs/                    vendor contracts, architecture, autounattend, adding a provider
 tests/                   offline Pester suite + recorded fixtures
 ```

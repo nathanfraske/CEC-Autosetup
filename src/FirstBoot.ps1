@@ -29,10 +29,26 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 Import-Module (Join-Path $here 'Common.psm1') -Force
 Import-Module (Join-Path $here 'Detect-Hardware.psm1') -Force
 Import-Module (Join-Path $here 'Detect-Peripherals.psm1') -Force
+Import-Module (Join-Path $here 'Mapping.psm1') -Force
 Import-Module (Join-Path $here 'Install-Engine.psm1') -Force
 Import-Module (Join-Path $here 'Install-Chrome.psm1') -Force
 Import-Module (Join-Path $here 'providers/Provider.psm1') -Force
 Import-Module (Join-Path $here 'apps/AppCatalog.psm1') -Force
+
+function Resolve-MsiBoardCode {
+    # MSI boards may report an MS-xxxx code instead of the model name; map it via
+    # config/msi-codes.json (verified data only). Returns the name, or $null.
+    param([string] $Model)
+    if ($Model -notmatch '^(?i)MS-[0-9A-Za-z]+$') { return $null }
+    try {
+        $p = Join-Path (Get-FirstBootRoot) 'config/msi-codes.json'
+        if (-not (Test-Path -LiteralPath $p)) { return $null }
+        $codes = (Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json).codes
+        $hit = $codes.PSObject.Properties[$Model.ToUpperInvariant()]
+        if ($hit) { return [string]$hit.Value }
+    } catch { }
+    return $null
+}
 
 function Select-Drivers {
     param($Drivers, [string[]] $AllowCategories, [string[]] $DenyDefault, [switch] $IncludeBiosEntries)
@@ -85,6 +101,28 @@ if ($Model -and $Vendor) {
     Write-Log "Board: manufacturer='$($board.Manufacturer)', model='$($board.Model)', vendor=$($board.Vendor)" -Level Info
 }
 
+# --- naming reconciliation (mapping table + MS-xxxx codes) ----------------
+$resolveModel = $board.Model
+$resolveSlug  = $null
+$mapEntry = $null
+try {
+    $mapEntry = Find-MappingEntry -Mapping (Get-Mapping) -Model $board.Model
+} catch { Write-Log "Mapping lookup error: $($_.Exception.Message)" -Level Warn }
+
+if ($mapEntry) {
+    Write-Log "Mapping hit: '$($board.Model)' -> $($mapEntry.vendor)/$($mapEntry.model)" -Level Info
+    if (-not $board.Vendor) { $board.Vendor = [string]$mapEntry.vendor }
+    if ($mapEntry.model) { $resolveModel = [string]$mapEntry.model }
+    if ($mapEntry.slug)  { $resolveSlug  = [string]$mapEntry.slug }
+}
+if ($board.Vendor -eq 'msi') {
+    $msiName = Resolve-MsiBoardCode -Model $board.Model
+    if ($msiName) {
+        Write-Log "MSI board code '$($board.Model)' -> '$msiName'" -Level Info
+        $resolveModel = $msiName
+    }
+}
+
 $driverResults = New-Object System.Collections.Generic.List[object]
 $fallbackOpened = $false
 
@@ -95,10 +133,10 @@ if (-not $board.Vendor) {
     if (-not $provider) {
         Write-Log "No provider registered for vendor '$($board.Vendor)'." -Level Warn
     } else {
-        Write-Log "Provider: $($provider.Name) (headless=$($provider.SupportsHeadless))" -Level Info
+        Write-Log "Provider: $($provider.Name) (headless=$($provider.SupportsHeadless)); resolving '$resolveModel'$(if($resolveSlug){" (slug $resolveSlug)"})" -Level Info
 
         $identity = $null
-        try { $identity = & $provider.ResolveProduct $board.Model } catch { Write-Log "Resolve failed: $($_.Exception.Message)" -Level Warn }
+        try { $identity = & $provider.ResolveProduct $resolveModel $resolveSlug } catch { Write-Log "Resolve failed: $($_.Exception.Message)" -Level Warn }
 
         $drivers = $null
         $headlessFailed = $false
@@ -112,6 +150,18 @@ if (-not $board.Vendor) {
         }
 
         if ($drivers) {
+            # Self-heal the mapping cache after a successful headless resolve.
+            if (-not $mapEntry) {
+                try {
+                    $fb = & $provider.GetFallbackUrl $identity $resolveModel
+                    Save-MappingEntry -Model $board.Model -Entry ([pscustomobject]@{
+                        vendor = $provider.Name; model = $resolveModel
+                        method = "$($provider.Name)-api"; slug = $resolveSlug
+                        downloadPage = $fb; lastVerified = (Get-Date -Format 'yyyy-MM-dd')
+                    })
+                } catch { Write-Log "Mapping self-heal skipped: $($_.Exception.Message)" -Level Debug }
+            }
+
             $kept = Select-Drivers -Drivers $drivers -AllowCategories $Categories `
                 -DenyDefault $settings.categories.denyDefault -IncludeBiosEntries:$IncludeBios
             Write-Log "Selected $(@($kept).Count) of $(@($drivers).Count) driver file(s) to process." -Level Info
@@ -129,7 +179,8 @@ if (-not $board.Vendor) {
 
         # Fallback to Chrome when headless is unsupported, failed, or unresolved.
         if (-not $provider.SupportsHeadless -or $headlessFailed -or -not $identity) {
-            $fallbackUrl = & $provider.GetFallbackUrl $identity $board.Model
+            $fallbackUrl = if ($mapEntry -and $mapEntry.downloadPage) { [string]$mapEntry.downloadPage }
+                           else { & $provider.GetFallbackUrl $identity $resolveModel }
             Write-Log "Falling back to browser for $($provider.Name): $fallbackUrl" -Level Warn
             Open-Url -Url $fallbackUrl
             $fallbackOpened = $true

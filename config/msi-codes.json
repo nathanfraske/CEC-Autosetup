@@ -1,0 +1,4 @@
+{
+  "_comment": "SMBIOS board-code -> marketing name for MSI boards that report an MS-xxxx code in Win32_BaseBoard.Product instead of the model name. MSI publishes the code->name mapping on each product page. Populate from VERIFIED data only - do not guess a name from a code. Until a code is listed here, an MS-xxxx board falls back to the MSI support site. See docs/vendor-contracts.md open items.",
+  "codes": {}
+}

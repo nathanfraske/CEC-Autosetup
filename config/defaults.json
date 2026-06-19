@@ -15,6 +15,12 @@
     "fallbackBase": "https://www.asus.com/supportonly",
     "osidCandidates": [52, 50, 49, 48, 45, 44, 39, 38, 33, 18, 16, 7]
   },
+  "msi": {
+    "apiBase": "https://www.msi.com/api/v1/product/support",
+    "supportBase": "https://www.msi.com/Motherboard",
+    "cdnBase": "https://download.msi.com",
+    "preferredOs": ["Win11 64", "Win10 64"]
+  },
   "gigabyte": {
     "supportBase": "https://www.gigabyte.com/Motherboard",
     "cdnBase": "https://download.gigabyte.com",

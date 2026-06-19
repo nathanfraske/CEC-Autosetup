@@ -27,6 +27,13 @@ Describe 'ASUS: PDInfo parsing (fixture)' {
     It 'returns $null for a body without a ProductID' {
         Get-AsusProductIdFromPdInfo -JsonText '{"Result":{"ProductID":null}}' | Should -BeNullOrEmpty
     }
+    It 'captures Pdhashedid + canonical Name on a newer board (Z890)' {
+        $json = Get-Content (Join-Path $script:fixtures 'asus_pdinfo_z890.json') -Raw
+        $pd = Get-AsusPdInfo -JsonText $json
+        $pd.ProductID  | Should -Be 29693
+        $pd.Pdhashedid | Should -Be 'snrwk900sg1paule'
+        $pd.Name       | Should -Be 'TUF GAMING Z890-PLUS WIFI'
+    }
 }
 
 Describe 'ASUS: GetPDDrivers parsing (fixture)' {

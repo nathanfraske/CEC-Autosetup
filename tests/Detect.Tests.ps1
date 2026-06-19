@@ -13,7 +13,9 @@ Describe 'Detect-Hardware: vendor mapping' {
         @{ manufacturer = 'GIGA-BYTE TECHNOLOGY CO., LTD.';   expected = 'gigabyte' }
         @{ manufacturer = 'ASRock';                           expected = 'asrock' }
         @{ manufacturer = 'ASRock Incorporation';             expected = 'asrock' }
-        @{ manufacturer = 'Micro-Star International Co., Ltd.'; expected = $null }
+        @{ manufacturer = 'Micro-Star International Co., Ltd.'; expected = 'msi' }
+        @{ manufacturer = 'MSI';                              expected = 'msi' }
+        @{ manufacturer = 'Biostar Group';                    expected = $null }
     ) {
         param($manufacturer, $expected)
         Resolve-Vendor -Manufacturer $manufacturer | Should -Be $expected

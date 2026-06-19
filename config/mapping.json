@@ -1,0 +1,30 @@
+{
+  "_comment": "Model -> vendor cache + naming-reconciliation table. Keyed by normalized model name (lower-case, punctuation collapsed). A hit lets the orchestrator skip live resolution and supplies the vendor slug where it matters (notably the Gigabyte rev-slug, which is NOT derivable from SMBIOS). On a miss the orchestrator resolves live and self-heals into %ProgramData%\\firstboot\\mapping.cache.json. Regenerate ASUS rows with tools/Build-AsusMapping.ps1; Gigabyte rows need an All-Series crawl. See docs/architecture.md and docs/vendor-contracts.md.",
+  "entries": {
+    "ROG STRIX Z490-I GAMING": {
+      "vendor": "asus", "model": "ROG STRIX Z490-I GAMING", "method": "asus-api", "slug": null,
+      "downloadPage": "https://www.asus.com/supportonly/ROG%20STRIX%20Z490-I%20GAMING/helpdesk_download/",
+      "lastVerified": "2026-06-19"
+    },
+    "TUF GAMING Z890-PLUS WIFI": {
+      "vendor": "asus", "model": "TUF GAMING Z890-PLUS WIFI", "method": "asus-api", "slug": null,
+      "downloadPage": "https://www.asus.com/supportonly/TUF%20GAMING%20Z890-PLUS%20WIFI/helpdesk_download/",
+      "lastVerified": "2026-06-19"
+    },
+    "MAG B650 TOMAHAWK WIFI": {
+      "vendor": "msi", "model": "MAG B650 TOMAHAWK WIFI", "method": "msi-api", "slug": "MAG-B650-TOMAHAWK-WIFI",
+      "downloadPage": "https://www.msi.com/Motherboard/MAG-B650-TOMAHAWK-WIFI/support",
+      "lastVerified": "2026-06-19"
+    },
+    "B650 GAMING X AX V2": {
+      "vendor": "gigabyte", "model": "B650 GAMING X AX V2", "method": "gigabyte-html", "slug": "B650-GAMING-X-AX-V2-rev-10-11-12",
+      "downloadPage": "https://www.gigabyte.com/Motherboard/B650-GAMING-X-AX-V2-rev-10-11-12/support",
+      "lastVerified": "2026-06-19"
+    },
+    "X870E Taichi": {
+      "vendor": "asrock", "model": "X870E Taichi", "method": "asrock-browser", "slug": null,
+      "downloadPage": "https://www.asrock.com/mb/AMD/X870E%20Taichi/index.asp#Download",
+      "lastVerified": "2026-06-19"
+    }
+  }
+}

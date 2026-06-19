@@ -27,10 +27,11 @@ function Resolve-Vendor {
     param([Parameter(Mandatory)][AllowEmptyString()][string] $Manufacturer)
 
     switch -Regex ($Manufacturer) {
-        '(?i)asrock'        { return 'asrock' }   # check before ASUS (distinct strings, but explicit)
-        '(?i)asus'          { return 'asus' }
-        '(?i)giga-?byte'    { return 'gigabyte' }
-        default             { return $null }
+        '(?i)asrock'             { return 'asrock' }   # check before ASUS (distinct strings, but explicit)
+        '(?i)asus'               { return 'asus' }
+        '(?i)giga-?byte'         { return 'gigabyte' }
+        '(?i)micro-?star|\bMSI\b' { return 'msi' }
+        default                  { return $null }
     }
 }
 

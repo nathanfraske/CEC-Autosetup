@@ -52,7 +52,7 @@ function Get-AsrockPlatform {
 
 function Resolve-AsrockProduct {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string] $Model)
+    param([Parameter(Mandatory)][string] $Model, [string] $Slug)   # $Slug ignored (URL constructible)
 
     $platform = Get-AsrockPlatform -Model $Model
     $enc = [uri]::EscapeDataString($Model.Trim())
