@@ -245,30 +245,34 @@ otherwise the **Chrome fallback** to the official download page.
 
 ## GPU drivers (vendor-app approach)
 
-Discrete/integrated GPUs are detected from `Win32_VideoController`'s PCI `VEN_` id
-(`10DE` = NVIDIA, `1002` = AMD, `8086` = Intel; `src/Detect-Gpu.psm1`). Rather
-than resolve each driver, the apps phase installs the **vendor app**, which
-carries the driver:
+GPUs are detected from `Win32_VideoController`'s PCI `VEN_` id (`10DE` = NVIDIA,
+`1002` = AMD, `8086` = Intel; `src/Detect-Gpu.psm1`). **Every detected GPU vendor
+is handled** — no iGPU-vs-dGPU classification — so mixed setups (Intel iGPU +
+NVIDIA dGPU, AMD iGPU + Intel Arc, etc.) each get their vendor's driver.
 
-- **AMD** → AMD Software: Adrenalin Edition. The installer **is** the driver
-  package, so running it installs the GPU driver. (No winget package as of
-  2026-06-19 → Chrome fallback to the AMD drivers page.)
-- **NVIDIA** → NVIDIA App (winget `NVIDIA.app`, verified). Installs silently; the
-  app then downloads the latest Game Ready / Studio driver. It does **not** fully
-  auto-install the driver unattended.
-- **Intel** → Intel Arc / Graphics software (ships with the driver; no standalone
-  winget → Chrome fallback to the Intel Arc/Graphics download page).
+**NVIDIA — fully unattended (headless, built; `src/Install-Gpu.psm1`):**
+1. `https://www.nvidia.com/Download/API/lookupValueSearch.aspx?TypeID=3` → all
+   products; each `LookupValue` has `Name`, `pfid` (Value), series `psid`
+   (ParentID). Match the `Win32_VideoController` name by **normalized exact match**
+   (strip a leading `NVIDIA`, lower-case, collapse punctuation) so `RTX 4090` does
+   not collide with `RTX 4090 D` / `Laptop GPU`.
+2. `https://gfwsl.geforce.com/services_toolkit/services/com/nvidia/services/AjaxDriverService.php?func=DriverManualLookup&psid={psid}&pfid={pfid}&osID=57&languageCode=1033&isWHQL=1&dch=1`
+   → `IDS[0].downloadInfo.{Version,DownloadURL}` — a `.exe` on
+   `us.download.nvidia.com`. `osID=57` = Windows 11 64-bit (`config/defaults.json
+   nvidia.osId`).
+3. Download + **silent install** `<driver>.exe -s -noreboot`.
+   The **NVIDIA App** (winget `NVIDIA.app`) is also installed (apps phase) for
+   setup/management. If a card does not resolve in the catalog, the headless step
+   is skipped and the NVIDIA App handles the driver.
+   *Known-good (verified 2026-06-19): `NVIDIA GeForce RTX 4090` → psid 127 /
+   pfid 995 → osID 57 → GeForce Game Ready Driver 610.62.*
 
-**Future option (verified, not yet built):** NVIDIA exposes a headless driver
-lookup that returns the exact driver `.exe` for a fully-silent install, so the
-NVIDIA path could be made unattended later:
-- `https://www.nvidia.com/Download/API/lookupValueSearch.aspx?TypeID=3` →
-  products with `pfid` (Value) + series `psid` (ParentID).
-- `https://gfwsl.geforce.com/services_toolkit/services/com/nvidia/services/AjaxDriverService.php?func=DriverManualLookup&psid={psid}&pfid={pfid}&osID=57&dch=1`
-  → `IDS[0].downloadInfo.{Version,DownloadURL}` (a `.exe` on
-  `us.download.nvidia.com`; verified 2026-06-19, returned 596.72). `osID=57` =
-  Windows 11 64-bit. Silent install: `<driver>.exe -s -noreboot`. AMD/Intel have
-  no comparable clean headless API (bot-walled) → they stay app/Chrome-fallback.
+**AMD** → AMD Software: Adrenalin Edition. The installer **is** the driver
+package, so running it installs the GPU driver. No winget (2026-06-19) → Chrome
+fallback to the AMD drivers page. No clean headless driver API (bot-walled).
+
+**Intel** → Intel Arc / Graphics software (ships with the driver; no standalone
+winget → Chrome fallback to the Intel Arc/Graphics download page).
 
 ---
 

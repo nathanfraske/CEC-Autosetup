@@ -34,6 +34,12 @@
     "msiUrl": "https://dl.google.com/tag/s/dl/chrome/install/googlechromestandaloneenterprise64.msi",
     "wingetId": "Google.Chrome"
   },
+  "nvidia": {
+    "lookupUrl": "https://www.nvidia.com/Download/API/lookupValueSearch.aspx?TypeID=3",
+    "driverLookupBase": "https://gfwsl.geforce.com/services_toolkit/services/com/nvidia/services/AjaxDriverService.php",
+    "osId": 57,
+    "silentArgs": "-s -noreboot"
+  },
   "categories": {
     "denyDefault": [
       "Software and Utility",

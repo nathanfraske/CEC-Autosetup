@@ -4,7 +4,9 @@
 BeforeAll {
     $src = Join-Path (Split-Path -Parent $PSScriptRoot) 'src'
     Import-Module (Join-Path $src 'Detect-Gpu.psm1') -Force
+    Import-Module (Join-Path $src 'Install-Gpu.psm1') -Force
     Import-Module (Join-Path $src 'apps/AppCatalog.psm1') -Force
+    $script:fixtures = Join-Path $PSScriptRoot 'fixtures'
 }
 
 Describe 'Detect-Gpu: vendor classification' {
@@ -51,5 +53,44 @@ Describe 'Apps: GPU-vendor matching' {
     It 'matches no GPU app when no GPU vendor is present' {
         $hits = Find-MatchingApps -Devices @() -GpuVendors @()
         ($hits.Name) | Should -Not -Contain 'NVIDIA App'
+    }
+}
+
+Describe 'NVIDIA driver: name normalization + product resolve (fixture)' {
+    BeforeAll {
+        $script:products = Get-NvidiaProducts -Xml (Get-Content (Join-Path $script:fixtures 'nvidia_products.xml') -Raw)
+    }
+    It 'normalizes away the NVIDIA prefix' {
+        Get-NvidiaNormalizedName 'NVIDIA GeForce RTX 4090' | Should -Be 'geforce rtx 4090'
+        Get-NvidiaNormalizedName 'GeForce RTX 4090 Laptop GPU' | Should -Be 'geforce rtx 4090 laptop gpu'
+    }
+    It 'parses the product list' {
+        @($script:products).Count | Should -Be 5
+    }
+    It 'resolves the desktop RTX 4090 to psid 127 / pfid 995' {
+        $p = Resolve-NvidiaProduct -GpuName 'NVIDIA GeForce RTX 4090' -Products $script:products
+        $p.Psid | Should -Be '127'
+        $p.Pfid | Should -Be '995'
+    }
+    It 'does not confuse the 4090 with the 4090 D variant' {
+        (Resolve-NvidiaProduct -GpuName 'NVIDIA GeForce RTX 4090' -Products $script:products).Pfid | Should -Be '995'
+    }
+    It 'resolves the laptop GPU despite the prefix difference' {
+        $p = Resolve-NvidiaProduct -GpuName 'NVIDIA GeForce RTX 4090 Laptop GPU' -Products $script:products
+        $p.Pfid | Should -Be '1004'
+    }
+    It 'returns $null for an unknown card' {
+        Resolve-NvidiaProduct -GpuName 'NVIDIA GeForce RTX 9999' -Products $script:products | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'NVIDIA driver: DriverManualLookup parsing (fixture)' {
+    It 'extracts the version and CDN url' {
+        $info = ConvertFrom-NvidiaDriverLookup -JsonText (Get-Content (Join-Path $script:fixtures 'nvidia_driver_lookup.json') -Raw)
+        $info.Version | Should -Be '610.62'
+        $info.Url     | Should -BeLike 'https://us.download.nvidia.com/*.exe'
+    }
+    It 'returns $null when Success is 0' {
+        ConvertFrom-NvidiaDriverLookup -JsonText '{"Success":"0","IDS":[]}' | Should -BeNullOrEmpty
     }
 }

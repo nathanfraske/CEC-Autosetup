@@ -19,6 +19,7 @@ param(
     [string[]] $Categories,
     [int]      $Osid = 0,
     [switch]   $SkipApps,
+    [switch]   $SkipGpu,
     [string]   $Model,
     [string]   $Vendor
 )
@@ -30,6 +31,7 @@ Import-Module (Join-Path $here 'Common.psm1') -Force
 Import-Module (Join-Path $here 'Detect-Hardware.psm1') -Force
 Import-Module (Join-Path $here 'Detect-Peripherals.psm1') -Force
 Import-Module (Join-Path $here 'Detect-Gpu.psm1') -Force
+Import-Module (Join-Path $here 'Install-Gpu.psm1') -Force
 Import-Module (Join-Path $here 'Mapping.psm1') -Force
 Import-Module (Join-Path $here 'Install-Engine.psm1') -Force
 Import-Module (Join-Path $here 'Install-Chrome.psm1') -Force
@@ -193,6 +195,34 @@ if (-not $board.Vendor) {
     }
 }
 
+# --- GPU detection (shared by the GPU-driver and apps phases) ------------
+$gpus = @()
+$gpuVendors = @()
+try {
+    $gpus = @(Get-Gpus)
+    $gpuVendors = @($gpus | Where-Object { $_.Vendor } | Select-Object -ExpandProperty Vendor -Unique)
+    if ($gpus.Count -gt 0) {
+        Write-Log ("GPU(s): {0}" -f (($gpus | ForEach-Object { "$($_.Name) [$(if($_.Vendor){$_.Vendor}else{'?'})]" }) -join '; ')) -Level Info
+    }
+} catch { Write-Log "GPU detection error: $($_.Exception.Message)" -Level Warn }
+
+# --- GPU driver phase (NVIDIA fully unattended; AMD/Intel via their app) --
+# Every detected GPU vendor is handled - no fragile iGPU-vs-dGPU guessing. NVIDIA
+# gets the silent headless driver here AND the NVIDIA App in the apps phase;
+# AMD/Intel drivers ship with their vendor app (installed in the apps phase).
+$gpuResults = New-Object System.Collections.Generic.List[object]
+if ($SkipGpu) {
+    Write-Log "GPU driver phase skipped (-SkipGpu)." -Level Info
+} else {
+    foreach ($g in ($gpus | Where-Object { $_.Vendor -eq 'nvidia' })) {
+        $gpuResults.Add((Install-NvidiaDriver -GpuName $g.Name -OsId ([int]$settings.nvidia.osId))) | Out-Null
+    }
+    $appDriven = @($gpuVendors | Where-Object { $_ -in 'amd', 'intel' })
+    if ($appDriven.Count -gt 0) {
+        Write-Log "AMD/Intel GPU driver(s) are carried by the vendor app (apps phase): $($appDriven -join ', ')" -Level Info
+    }
+}
+
 # --- apps phase ----------------------------------------------------------
 $appResults = New-Object System.Collections.Generic.List[object]
 $appsEnabled = $true
@@ -200,11 +230,9 @@ try { $appsEnabled = [bool]$settings.apps.enabled } catch { }
 if ($SkipApps -or -not $appsEnabled) {
     Write-Log "Apps phase skipped." -Level Info
 } else {
-    Write-Log "Apps phase: scanning GPUs + peripherals..." -Level Info
+    Write-Log "Apps phase: matching GPU vendors + peripherals to the catalog..." -Level Info
     try {
         $devices = Get-Peripherals
-        $gpuVendors = @(Get-GpuVendors)
-        if ($gpuVendors.Count -gt 0) { Write-Log "GPU vendor(s): $($gpuVendors -join ', ')" -Level Info }
         $appMatches = Find-MatchingApps -Devices $devices -GpuVendors $gpuVendors
         if (@($appMatches).Count -eq 0) {
             Write-Log "No catalog apps matched the detected hardware." -Level Info
@@ -224,6 +252,9 @@ Write-Log "-------------------- summary --------------------" -Level Info
 Write-Log "Board: $($board.Manufacturer) / $($board.Model) ($($board.Vendor))" -Level Info
 foreach ($r in $driverResults) {
     Write-Log ("  driver [{0,-11}] {1} {2} ({3})" -f $r.Status, $r.Category, $r.Name, $r.Method) -Level Info
+}
+foreach ($r in $gpuResults) {
+    Write-Log ("  gpu    [{0,-11}] {1} {2} ({3})" -f $r.Status, $r.Gpu, $r.Version, $r.Method) -Level Info
 }
 foreach ($r in $appResults) {
     Write-Log ("  app    [{0,-11}] {1} ({2})" -f $r.Status, $r.Name, $r.Method) -Level Info

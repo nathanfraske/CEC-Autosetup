@@ -31,12 +31,18 @@ src/FirstBoot.ps1  (orchestrator)
    ├─ else (not headless, list failed, or unresolved):
    │        Install-Chrome.psm1: ensure Chrome ─▶ Open-Url(fallback) ─▶ print checklist
    │
+   ├─ GPU detection: Detect-Gpu.psm1 ─▶ GPUs { Name, Vendor: nvidia|amd|intel }
+   │
+   ├─ GPU driver phase (unless -SkipGpu):
+   │        NVIDIA ─▶ Install-Gpu.psm1: lookup psid/pfid ─▶ DriverManualLookup
+   │                  ─▶ download ─▶ silent install (.exe -s -noreboot)   [fully unattended]
+   │        AMD / Intel ─▶ driver carried by the vendor app (apps phase)
+   │
    ├─ apps phase (unless -SkipApps):
-   │        Detect-Gpu.psm1         ─▶ GPU vendors { nvidia | amd | intel }
    │        Detect-Peripherals.psm1 ─▶ devices { Name, VidPid, Class }
    │        apps/AppCatalog.psm1: Find-MatchingApps (gpuVendor | VID:PID | name) ─▶ Install-App
    │            winget (if package id) | Chrome fallback (official page)
-   │            GPU: NVIDIA App / AMD Adrenalin / Intel Arc carry the driver
+   │            GPU apps: NVIDIA App / AMD Adrenalin / Intel Arc
    │
    └─ write summary; transcript at %ProgramData%\firstboot\logs\
 ```

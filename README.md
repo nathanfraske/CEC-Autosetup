@@ -81,7 +81,8 @@ See [`docs/autounattend.md`](docs/autounattend.md) to wire this into
 | `-IncludeBios` | List BIOS entries. **Never flashes** — listing only. |
 | `-Categories a,b` | Explicit category allow-list (default: skip pure utilities). |
 | `-Osid <int>` | ASUS `osid` override (default: probe candidates). |
-| `-SkipApps` | Skip the peripheral-software (apps) phase. |
+| `-SkipApps` | Skip the apps phase (GPU vendor apps + peripheral software). |
+| `-SkipGpu` | Skip the NVIDIA headless GPU-driver install. |
 | `-Model` / `-Vendor` | Override hardware detection (testing / odd boards). |
 
 ## Supported boards
@@ -115,17 +116,20 @@ device-name patterns; installed via winget or the Chrome fallback. Defined in
 
 | App | Trigger | Install |
 | --- | --- | --- |
-| NVIDIA App | NVIDIA GPU (VEN_10DE) | winget `NVIDIA.app` (app then fetches the driver) |
+| **NVIDIA driver** | NVIDIA GPU (VEN_10DE) | **fully unattended** — headless lookup → silent `.exe -s -noreboot` |
+| NVIDIA App | NVIDIA GPU (VEN_10DE) | winget `NVIDIA.app` (for setup/management) |
 | AMD Software: Adrenalin Edition | AMD GPU (VEN_1002) | opens AMD drivers page (no winget; Adrenalin **installs the driver when run**) |
 | Intel Arc / Graphics Software | Intel GPU (VEN_8086) | opens Intel Arc/Graphics download page |
 | SignalRGB | common RGB peripherals (Corsair, Razer, Aura, …) | winget `WhirlwindFX.SignalRgb` |
 | Thermalright Control Center | TR cooler USB controllers / "Thermalright" devices | opens official download page (no winget package) |
 
-> **GPU driver note:** the GPU phase installs the *vendor app*, which carries the
-> driver. **AMD Adrenalin installs the GPU driver when run.** The **NVIDIA App**
-> and **Intel** software fetch/offer the latest driver (a fully-silent headless
-> driver install is a documented future option — NVIDIA exposes a driver-lookup
-> API; see [`docs/vendor-contracts.md`](docs/vendor-contracts.md)).
+> **GPU drivers:** **NVIDIA is fully unattended** — the GPU phase resolves the
+> exact driver via NVIDIA's lookup API and silent-installs it (`-s -noreboot`),
+> *and* installs the NVIDIA App for setup. **AMD Adrenalin installs the driver
+> when run.** Intel's software carries its driver. Every detected GPU vendor is
+> handled (no iGPU-vs-dGPU guessing), so mixed setups (e.g. Intel iGPU + NVIDIA
+> dGPU, AMD iGPU + Intel Arc) all get each vendor's driver. `-SkipGpu` skips the
+> NVIDIA headless driver step.
 
 ## Safety
 
@@ -148,6 +152,7 @@ src/
   Detect-Hardware.psm1   Win32_BaseBoard -> {vendor, model}
   Detect-Peripherals.psm1 USB/PnP enumeration for the apps phase
   Detect-Gpu.psm1        Win32_VideoController -> GPU vendor (nvidia/amd/intel)
+  Install-Gpu.psm1       NVIDIA headless driver lookup + silent install
   Mapping.psm1           naming reconciliation + model->vendor cache (self-heal)
   Install-Engine.psm1    download -> verify -> extract -> pnputil/EXE install
   Install-Chrome.psm1    silent Chrome install + open-url fallback substrate
