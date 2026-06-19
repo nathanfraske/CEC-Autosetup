@@ -86,7 +86,8 @@ See [`docs/autounattend.md`](docs/autounattend.md) to wire this into
 | `-SkipApps` | Skip the apps phase (GPU vendor apps + peripheral + baseline software). |
 | `-SkipGpu` | Skip the NVIDIA headless GPU-driver install. |
 | `-SkipTweaks` | Skip the provisioning phase (default browser, taskbar, OneDrive/Copilot, wallpaper). |
-| `-Tier <name>` | Ship tier → wallpaper (e.g. `-Tier flagship`); see [provisioning](docs/provisioning.md). |
+| `-Tier <name>` | Ship tier → wallpaper (e.g. `-Tier Dreadnought`); see [provisioning](docs/provisioning.md). |
+| `-InstallApps a,b` | Force-install named catalog apps regardless of detection (e.g. `-InstallApps "Hyte Nexus"`). |
 | `-Model` / `-Vendor` | Override hardware detection (testing / odd boards). |
 
 ## Supported boards
@@ -126,7 +127,11 @@ device-name patterns; installed via winget or the Chrome fallback. Defined in
 | Intel Arc / Graphics Software | Intel GPU (VEN_8086) | opens Intel Arc/Graphics download page |
 | SignalRGB | common RGB peripherals (Corsair, Razer, Aura, …) | winget `WhirlwindFX.SignalRgb` |
 | Thermalright Control Center | TR cooler USB controllers / "Thermalright" devices | opens official download page (no winget package) |
+| Hyte Nexus | "HYTE" device name, or `-InstallApps "Hyte Nexus"` | opens hyte.com/nexus (no winget package) |
 | Steam | baseline (`match.always` — every build) | winget `Valve.Steam` |
+
+> Apps with no reliable auto-detection (e.g. Hyte Nexus — the Y70 Touch screen's
+> USB VID:PID isn't documented) can be forced with `-InstallApps "<name>"`.
 
 > **GPU drivers:** **NVIDIA is fully unattended** — the GPU phase resolves the
 > exact driver via NVIDIA's lookup API and silent-installs it (`-s -noreboot`),

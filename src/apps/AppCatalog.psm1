@@ -84,7 +84,8 @@ function Find-MatchingApps {
     param(
         [Parameter(Mandatory)][AllowEmptyCollection()] $Devices,
         $Catalog,
-        [string[]] $GpuVendors = @()
+        [string[]] $GpuVendors = @(),
+        [string[]] $Include = @()
     )
     if (-not $Catalog) { $Catalog = Get-AppCatalog }
 
@@ -93,6 +94,17 @@ function Find-MatchingApps {
         $reason = Test-AppMatch -App $app -Devices $Devices -GpuVendors $GpuVendors
         if ($reason) {
             $hits.Add([pscustomobject]@{ App = $app; Name = $app.name; Reason = $reason }) | Out-Null
+        }
+    }
+
+    # Force-include explicitly requested apps (e.g. -InstallApps 'Hyte Nexus').
+    foreach ($name in $Include) {
+        if (@($hits | Where-Object { $_.Name -ieq $name }).Count -gt 0) { continue }
+        $app = $Catalog | Where-Object { $_.name -ieq $name } | Select-Object -First 1
+        if ($app) {
+            $hits.Add([pscustomobject]@{ App = $app; Name = $app.name; Reason = 'requested (-InstallApps)' }) | Out-Null
+        } else {
+            Write-Log "Requested app '$name' is not in the catalog." -Level Warn
         }
     }
     return $hits.ToArray()

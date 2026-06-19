@@ -76,6 +76,16 @@
       "fallbackUrl": "https://store.steampowered.com/about/",
       "match": { "always": true },
       "notes": "Baseline app installed on every build (match.always). winget id Valve.Steam."
+    },
+    {
+      "name": "Hyte Nexus",
+      "wingetId": null,
+      "fallbackUrl": "https://hyte.com/nexus",
+      "match": {
+        "vidpid": [],
+        "namePatterns": ["HYTE"]
+      },
+      "notes": "No winget package as of 2026-06-19; opens hyte.com/nexus in Chrome. Detection is best-effort by name (the Y70 Touch screen is a USB device but its VID:PID is not documented - capture it on real hardware via tools/Get-DeviceIds.ps1 and add to match.vidpid; see docs/browser-agent-tasks.md). Reliable trigger: -InstallApps 'Hyte Nexus'."
     }
   ]
 }

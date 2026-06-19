@@ -79,7 +79,15 @@ Only add pairs you actually verified on the page.
 
 ---
 
-## 4. Thermalright (and other peripherals) — USB VID:PID
+## 4. Thermalright / Hyte (and other peripherals) — USB VID:PID
+
+For **Hyte Nexus**: the HYTE Y70 Touch screen is a USB device but its VID:PID is
+undocumented. Capture it on a real Y70 Touch build with
+`pwsh -File tools/Get-DeviceIds.ps1 -UsbOnly` (look for the touchscreen / a HYTE
+HID entry) and add it to the `Hyte Nexus` entry's `match.vidpid` in
+`config/apps.json`. Until then it installs via `-InstallApps "Hyte Nexus"` or a
+name match.
+
 
 Best captured from real hardware, but a browser can confirm from the **TRCC
 installer / INF**:

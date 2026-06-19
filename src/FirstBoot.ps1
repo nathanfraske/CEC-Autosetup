@@ -22,6 +22,7 @@ param(
     [switch]   $SkipGpu,
     [switch]   $SkipTweaks,
     [string]   $Tier,
+    [string[]] $InstallApps,
     [string]   $Model,
     [string]   $Vendor
 )
@@ -243,7 +244,7 @@ if ($SkipApps -or -not $appsEnabled) {
     Write-Log "Apps phase: matching GPU vendors + peripherals to the catalog..." -Level Info
     try {
         $devices = Get-Peripherals
-        $appMatches = Find-MatchingApps -Devices $devices -GpuVendors $gpuVendors
+        $appMatches = Find-MatchingApps -Devices $devices -GpuVendors $gpuVendors -Include $InstallApps
         if (@($appMatches).Count -eq 0) {
             Write-Log "No catalog apps matched the detected hardware." -Level Info
         }

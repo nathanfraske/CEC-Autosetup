@@ -18,6 +18,7 @@ param(
     [switch]   $SkipGpu,
     [switch]   $SkipTweaks,
     [string]   $Tier,
+    [string[]] $InstallApps,
     [string]   $Model,
     [string]   $Vendor,
     [string]   $Repo,                # owner/name override (default below)

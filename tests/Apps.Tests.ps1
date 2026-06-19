@@ -30,6 +30,28 @@ Describe 'Apps: catalog' {
         $sig = Get-AppCatalog | Where-Object { $_.name -eq 'SignalRGB' }
         $sig.wingetId | Should -Be 'WhirlwindFX.SignalRgb'
     }
+    It 'includes Hyte Nexus (browser-fallback)' {
+        $hyte = Get-AppCatalog | Where-Object { $_.name -eq 'Hyte Nexus' }
+        $hyte | Should -Not -BeNullOrEmpty
+        $hyte.fallbackUrl | Should -Be 'https://hyte.com/nexus'
+    }
+}
+
+Describe 'Apps: force-install (-Include)' {
+    It 'force-includes a requested app with no hardware match' {
+        $hits = Find-MatchingApps -Devices @() -GpuVendors @() -Include @('Hyte Nexus')
+        $hit = $hits | Where-Object { $_.Name -eq 'Hyte Nexus' }
+        $hit | Should -Not -BeNullOrEmpty
+        $hit.Reason | Should -Match 'requested'
+    }
+    It 'does not duplicate an app that already matched' {
+        $hits = Find-MatchingApps -Devices @() -GpuVendors @() -Include @('Steam')
+        @($hits | Where-Object { $_.Name -eq 'Steam' }).Count | Should -Be 1
+    }
+    It 'ignores an unknown requested app' {
+        $hits = Find-MatchingApps -Devices @() -GpuVendors @() -Include @('Totally Made Up App')
+        ($hits.Name) | Should -Not -Contain 'Totally Made Up App'
+    }
 }
 
 Describe 'Apps: matching' {
