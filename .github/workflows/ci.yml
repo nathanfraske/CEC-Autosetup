@@ -5,9 +5,15 @@ name: CI
 
 on:
   push:
-    branches: [main, 'claude/**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
+
+# One run per ref; cancel superseded runs. Avoids duplicate push+PR runs on
+# feature branches (the pull_request event already covers open PRs).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint-and-test:
