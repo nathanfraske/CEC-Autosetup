@@ -84,6 +84,26 @@ Describe 'NVIDIA driver: name normalization + product resolve (fixture)' {
     }
 }
 
+Describe 'GPU driver: AMD/Intel silent install' {
+    It 'maps the verified silent switch per vendor' {
+        Get-GpuSilentArgs -Vendor 'amd'    | Should -Be '-INSTALL'
+        Get-GpuSilentArgs -Vendor 'intel'  | Should -Be '-s'
+        Get-GpuSilentArgs -Vendor 'nvidia' | Should -Be '-s -noreboot'
+    }
+    It 'plans only under -WhatIf' {
+        $r = Install-GpuVendorDriver -Vendor 'amd' -InstallerUrl 'http://x/adrenalin.exe' -WhatIf
+        $r.Status | Should -Be 'WhatIf'
+        $r.Method | Should -Be 'gpu-driver:amd'
+    }
+    It 'downloads + silent-installs when given an installer url' {
+        Mock -ModuleName Install-Gpu Save-Download { }
+        Mock -ModuleName Install-Gpu Invoke-ExeInstaller { 0 }
+        $r = Install-GpuVendorDriver -Vendor 'intel' -InstallerUrl 'http://x/gfx_win.exe'
+        $r.Status | Should -Be 'Installed'
+        Should -Invoke -ModuleName Install-Gpu Invoke-ExeInstaller -Times 1 -ParameterFilter { $Arguments -eq '-s' }
+    }
+}
+
 Describe 'NVIDIA driver: DriverManualLookup parsing (fixture)' {
     It 'extracts the version and CDN url' {
         $info = ConvertFrom-NvidiaDriverLookup -JsonText (Get-Content (Join-Path $script:fixtures 'nvidia_driver_lookup.json') -Raw)

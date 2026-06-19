@@ -134,13 +134,15 @@ device-name patterns; installed via winget or the Chrome fallback. Defined in
 > Apps with no reliable auto-detection (e.g. Hyte Nexus — the Y70 Touch screen's
 > USB VID:PID isn't documented) can be forced with `-InstallApps "<name>"`.
 
-> **GPU drivers:** **NVIDIA is fully unattended** — the GPU phase resolves the
-> exact driver via NVIDIA's lookup API and silent-installs it (`-s -noreboot`),
-> *and* installs the NVIDIA App for setup. **AMD Adrenalin installs the driver
-> when run.** Intel's software carries its driver. Every detected GPU vendor is
-> handled (no iGPU-vs-dGPU guessing), so mixed setups (e.g. Intel iGPU + NVIDIA
-> dGPU, AMD iGPU + Intel Arc) all get each vendor's driver. `-SkipGpu` skips the
-> NVIDIA headless driver step.
+> **GPU drivers:** **NVIDIA is fully unattended** — resolves the exact driver via
+> NVIDIA's lookup API and silent-installs it (`-s -noreboot`), plus the NVIDIA App.
+> **AMD/Intel can be fully unattended too** when you supply the installer (pin
+> `amd.url`/`intel.url` in `config/defaults.json`, or stage it in the driver
+> library under `gpu-installers/<vendor>/`): the client downloads it and runs the
+> verified silent switch (AMD `-INSTALL`, Intel `-s`). With no installer supplied,
+> AMD/Intel fall back to installing the vendor app, which carries the driver.
+> Every detected GPU vendor is handled (no iGPU-vs-dGPU guessing), so mixed setups
+> all get each vendor's driver. `-SkipGpu` skips the GPU-driver step.
 
 ## Local driver library (LAN mirror)
 

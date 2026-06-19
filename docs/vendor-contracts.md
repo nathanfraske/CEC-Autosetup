@@ -283,12 +283,23 @@ NVIDIA dGPU, AMD iGPU + Intel Arc, etc.) each get their vendor's driver.
    *Known-good (verified 2026-06-19): `NVIDIA GeForce RTX 4090` → psid 127 /
    pfid 995 → osID 57 → GeForce Game Ready Driver 610.62.*
 
-**AMD** → AMD Software: Adrenalin Edition. The installer **is** the driver
-package, so running it installs the GPU driver. No winget (2026-06-19) → Chrome
-fallback to the AMD drivers page. No clean headless driver API (bot-walled).
+**AMD / Intel — unattended *given an installer*.** Neither has a clean headless
+driver-lookup API (download sites are bot-walled), so *discovery* of the latest
+installer can't be automated headlessly. The **silent install is** automatable
+once you have the file:
 
-**Intel** → Intel Arc / Graphics software (ships with the driver; no standalone
-winget → Chrome fallback to the Intel Arc/Graphics download page).
+- **AMD** Adrenalin: `Setup.exe -INSTALL` (AMD Radeon Software Command-Line guide;
+  `-boot` for auto-reboot). The installer **is** the driver package.
+- **Intel** graphics (DCH): `Installer.exe -s` (`--overwrite` to force).
+
+`Install-GpuVendorDriver` downloads + silent-installs given an installer URL.
+Provide that URL one of two ways: pin it in `config/defaults.json`
+(`amd.url` / `intel.url`), or **stage the installer in the driver library**
+(`gpu-installers/<vendor>/` → published to `gpu/<vendor>/` + `index.json`
+`gpuInstallers`), so clients pull + silent-install it over the LAN. With neither,
+AMD/Intel fall back to installing the **vendor app** (Adrenalin / Intel Arc) via
+the apps phase, which carries the driver. A browser agent can refresh the
+installer URLs on a schedule (discovery is the only bot-walled part).
 
 ---
 

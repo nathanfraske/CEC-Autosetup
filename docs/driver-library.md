@@ -51,6 +51,11 @@ pwsh -File tools/Build-DriverLibrary.ps1 -OutputDir /srv/cec-drivers -WhatIf   #
   only fetch what's new.
 - **ASRock is not included** — Incapsula blocks headless fetches, so ASRock stays
   client-side browser-fallback.
+- **AMD/Intel GPU installers** — drop the latest Adrenalin / Intel graphics `.exe`
+  into `gpu-installers/amd/` and `gpu-installers/intel/`; the builder publishes
+  them to `gpu/<vendor>/` + `index.json` so clients silent-install them over the
+  LAN (AMD `-INSTALL`, Intel `-s`). See `gpu-installers/README.md`. (NVIDIA needs
+  no staging — it resolves + installs headlessly on the client.)
 - **Disk**: current + last-gen across ASUS/MSI/Gigabyte is roughly the order of a
   few hundred GB. Point `-OutputDir` at a roomy volume.
 

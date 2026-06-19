@@ -69,6 +69,22 @@ Describe 'DriverLibrary: index lookup + entry conversion' {
     }
 }
 
+Describe 'DriverLibrary: staged GPU installer lookup' {
+    It 'builds the mirror URL for a staged vendor installer' {
+        $idx = [pscustomobject]@{ gpuInstallers = [pscustomobject]@{
+                amd = [pscustomobject]@{ relPath = 'gpu/amd/adrenalin.exe'; silentArgs = '-INSTALL' } } }
+        Get-LibraryGpuInstaller -Index $idx -Vendor 'amd' -MirrorBase 'http://10.0.0.5:8080' |
+            Should -Be 'http://10.0.0.5:8080/gpu/amd/adrenalin.exe'
+    }
+    It 'returns $null when the vendor is not staged' {
+        $idx = [pscustomobject]@{ gpuInstallers = [pscustomobject]@{ amd = [pscustomobject]@{ relPath = 'gpu/amd/x.exe' } } }
+        Get-LibraryGpuInstaller -Index $idx -Vendor 'intel' -MirrorBase 'http://h:8080' | Should -BeNullOrEmpty
+    }
+    It 'returns $null when no gpuInstallers map exists' {
+        Get-LibraryGpuInstaller -Index ([pscustomobject]@{ boards = @{} }) -Vendor 'amd' -MirrorBase 'http://h' | Should -BeNullOrEmpty
+    }
+}
+
 Describe 'DriverLibrary: current+last-gen board selection' {
     BeforeAll {
         $script:map = @{

@@ -1,5 +1,7 @@
 # --- Downloaded / runtime artifacts -------------------------------------
 work/
+library/                 # built driver-library mirror (huge; built on the host)
+gpu-installers/*/         # staged vendor GPU installers (supplied per bench)
 *.zip
 *.msi
 *.exe

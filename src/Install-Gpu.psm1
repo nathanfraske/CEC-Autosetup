@@ -128,6 +128,61 @@ function Get-NvidiaDriverInfo {
     return $info
 }
 
+function Get-GpuSilentArgs {
+    <#
+        .SYNOPSIS
+        The verified silent-install switch per GPU vendor (config-driven):
+        NVIDIA '-s -noreboot', AMD '-INSTALL', Intel '-s'.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string] $Vendor)
+    $s = Get-Settings
+    switch ($Vendor.ToLowerInvariant()) {
+        'nvidia' { return [string]$s.nvidia.silentArgs }
+        'amd'    { return [string]$s.amd.silentArgs }
+        'intel'  { return [string]$s.intel.silentArgs }
+        default  { return '' }
+    }
+}
+
+function Install-GpuVendorDriver {
+    <#
+        .SYNOPSIS
+        Fully-unattended AMD/Intel GPU driver install GIVEN an installer URL
+        (pinned in config or served from the driver library). Download + silent
+        run with the vendor switch. Returns a result; honors -WhatIf.
+        (NVIDIA uses Install-NvidiaDriver, which also resolves the URL headlessly.)
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][string] $Vendor,
+        [Parameter(Mandatory)][string] $InstallerUrl,
+        [string] $SilentArgs
+    )
+    if (-not $SilentArgs) { $SilentArgs = Get-GpuSilentArgs -Vendor $Vendor }
+    $result = [pscustomobject]@{ Vendor = $Vendor; Gpu = "$Vendor GPU driver"; Version = ''; Method = "gpu-driver:$Vendor"; Status = $null; Detail = $null }
+
+    if (-not $PSCmdlet.ShouldProcess($Vendor, "download + silent-install GPU driver ($SilentArgs)")) {
+        Write-Log "PLAN: $Vendor GPU driver <- $InstallerUrl (silent: $SilentArgs)" -Level Info
+        $result.Status = 'WhatIf'; return $result
+    }
+    try {
+        $name = [IO.Path]::GetFileName(($InstallerUrl -split '\?')[0])
+        if ([string]::IsNullOrWhiteSpace($name) -or $name -notmatch '\.exe$') { $name = "$Vendor-gpu-driver.exe" }
+        $dest = Join-Path (Get-WorkDirectory) $name
+        Write-Log "Downloading $Vendor GPU driver..." -Level Info
+        Save-Download -Url $InstallerUrl -Destination $dest -Activity "Downloading $Vendor GPU driver" | Out-Null
+        Write-Log "Installing $Vendor GPU driver silently ($SilentArgs)..." -Level Info
+        $code = Invoke-ExeInstaller -Path $dest -Arguments $SilentArgs
+        # 0 ok; 1/14 vendor "reboot required"; 3010 Windows reboot-required.
+        $result.Status = if ($code -in 0, 1, 14, 3010) { 'Installed' } else { 'Failed' }
+        $result.Detail = "exit $code"
+    } catch {
+        $result.Status = 'Failed'; $result.Detail = $_.Exception.Message
+    }
+    return $result
+}
+
 function Install-NvidiaDriver {
     <#
         .SYNOPSIS
@@ -170,4 +225,5 @@ function Install-NvidiaDriver {
 
 Export-ModuleMember -Function `
     Get-NvidiaNormalizedName, Get-NvidiaProducts, Resolve-NvidiaProduct, `
-    ConvertFrom-NvidiaDriverLookup, Get-NvidiaDriverInfo, Install-NvidiaDriver
+    ConvertFrom-NvidiaDriverLookup, Get-NvidiaDriverInfo, Install-NvidiaDriver, `
+    Get-GpuSilentArgs, Install-GpuVendorDriver

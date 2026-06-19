@@ -114,6 +114,29 @@ foreach ($b in $boards) {
     }
 }
 
+# Stage AMD/Intel GPU installers the shop dropped in gpu-installers/<vendor>/ so
+# clients silent-install them over the LAN (discovery is bot-walled; you supply the
+# file, e.g. via a browser-agent fetch). Newest .exe per vendor wins.
+$gpuInstallers = [ordered]@{}
+foreach ($v in 'amd', 'intel') {
+    $stage = Join-Path $root "gpu-installers/$v"
+    if (-not (Test-Path -LiteralPath $stage)) { continue }
+    $exe = Get-ChildItem -LiteralPath $stage -Filter *.exe -File -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if (-not $exe) { continue }
+    $rel = "gpu/$v/$($exe.Name)"
+    if ($PSCmdlet.ShouldProcess($rel, "stage $v GPU installer")) {
+        $dest = Join-Path $OutputDir $rel
+        New-Item -ItemType Directory -Path (Split-Path -Parent $dest) -Force | Out-Null
+        Copy-Item -LiteralPath $exe.FullName -Destination $dest -Force
+    }
+    $silent = ''
+    try { $silent = [string]$s.$v.silentArgs } catch { }
+    $gpuInstallers[$v] = [ordered]@{ relPath = $rel; silentArgs = $silent; file = $exe.Name }
+    Write-Host ("Staged {0} GPU installer: {1}" -f $v, $exe.Name)
+}
+if ($gpuInstallers.Count -gt 0) { $index.gpuInstallers = $gpuInstallers }
+
 Write-Host ""
 Write-Host ("Total: {0} files, {1:N1} GB across {2} board(s)." -f $totalFiles, ($totalBytes / 1GB), $index.boards.Count)
 $indexPath = Join-Path $OutputDir 'index.json'

@@ -42,6 +42,16 @@
     "osId": 57,
     "silentArgs": "-s -noreboot"
   },
+  "amd": {
+    "silentArgs": "-INSTALL",
+    "url": null,
+    "_note": "AMD has no headless driver-lookup API (bot-walled). For unattended install, pin the latest Adrenalin installer URL here OR stage it in the driver library (gpu-installers/amd/). Silent switch per AMD's Radeon Software Command Line guide."
+  },
+  "intel": {
+    "silentArgs": "-s",
+    "url": null,
+    "_note": "Intel has no clean headless driver-lookup API (bot-walled). Pin the latest Intel graphics installer URL here OR stage it in the driver library (gpu-installers/intel/). Silent switch: Installer.exe -s (add --overwrite to force)."
+  },
   "categories": {
     "denyDefault": [
       "Software and Utility",

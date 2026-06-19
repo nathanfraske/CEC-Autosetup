@@ -145,6 +145,7 @@ $mirrorBase = if ($Mirror) { $Mirror }
               else { $null }
 
 # 1) Local driver mirror first (LAN; works offline-from-internet).
+$index = $null
 if ($mirrorBase) {
     Write-Log "Checking local driver mirror: $mirrorBase" -Level Info
     try {
@@ -249,12 +250,26 @@ $gpuResults = New-Object System.Collections.Generic.List[object]
 if ($SkipGpu) {
     Write-Log "GPU driver phase skipped (-SkipGpu)." -Level Info
 } else {
+    # NVIDIA: fully headless (resolves its own installer + silent install).
     foreach ($g in ($gpus | Where-Object { $_.Vendor -eq 'nvidia' })) {
         $gpuResults.Add((Install-NvidiaDriver -GpuName $g.Name -OsId ([int]$settings.nvidia.osId))) | Out-Null
     }
-    $appDriven = @($gpuVendors | Where-Object { $_ -in 'amd', 'intel' })
-    if ($appDriven.Count -gt 0) {
-        Write-Log "AMD/Intel GPU driver(s) are carried by the vendor app (apps phase): $($appDriven -join ', ')" -Level Info
+    # AMD / Intel: unattended IF an installer is provided (pinned config url, or
+    # staged in the driver library). No clean headless discovery API, so otherwise
+    # the vendor app (apps phase) carries the driver.
+    foreach ($v in @($gpuVendors | Where-Object { $_ -in 'amd', 'intel' })) {
+        $url = $null
+        $pin = $null
+        try { $pin = [string]$settings.$v.url } catch { }
+        if ($pin) { $url = $pin }
+        elseif ($mirrorBase) { try { $url = Get-LibraryGpuInstaller -Index $index -Vendor $v -MirrorBase $mirrorBase } catch { } }
+
+        if ($url) {
+            Write-Log "$v GPU driver: unattended install from $url" -Level Info
+            $gpuResults.Add((Install-GpuVendorDriver -Vendor $v -InstallerUrl $url)) | Out-Null
+        } else {
+            Write-Log "$v GPU driver: no pinned/mirrored installer; the vendor app (apps phase) will carry it. To make it unattended, pin '$v.url' in defaults.json or stage it in the driver library." -Level Info
+        }
     }
 }
 

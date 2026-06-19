@@ -175,6 +175,29 @@ function Select-LibraryBoards {
     return $out.ToArray()
 }
 
+function Get-LibraryGpuInstaller {
+    <#
+        .SYNOPSIS
+        Returns the mirror URL of a staged GPU-vendor installer (amd|intel) from
+        the library index's optional gpuInstallers map, or $null. Lets a shop drop
+        the latest Adrenalin/Intel installer in the library and have clients
+        silent-install it over the LAN.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] $Index,
+        [Parameter(Mandatory)][string] $Vendor,
+        [Parameter(Mandatory)][string] $MirrorBase
+    )
+    if (-not $Index -or -not $Index.PSObject.Properties['gpuInstallers']) { return $null }
+    $prop = $Index.gpuInstallers.PSObject.Properties | Where-Object { $_.Name -ieq $Vendor } | Select-Object -First 1
+    if (-not $prop) { return $null }
+    $rel = [string]$prop.Value.relPath
+    if ([string]::IsNullOrWhiteSpace($rel)) { return $null }
+    return ($MirrorBase.TrimEnd('/') + '/' + $rel.TrimStart('/'))
+}
+
 Export-ModuleMember -Function `
     Get-VendorCdnKey, Get-MirrorRelativePath, Get-MirrorUrl, ConvertTo-MirrorDriverEntry, `
-    Get-LibraryIndex, Find-LibraryEntries, Get-LibraryChipsetTokens, Select-LibraryBoards
+    Get-LibraryIndex, Find-LibraryEntries, Get-LibraryChipsetTokens, Select-LibraryBoards, `
+    Get-LibraryGpuInstaller
