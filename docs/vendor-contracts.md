@@ -260,6 +260,19 @@ MSI `MS-xxxx` codes map via `config/msi-codes.json` (verified data only). ASUS
 rows are regenerable from the 897-board catalog via `tools/Build-AsusMapping.ps1`;
 the shipped seed is kept small for portability.
 
+**Populate strategy (lean + self-heal + scheduled refresh):**
+- **ASUS** — fully crawlable; `tools/Build-AsusMapping.ps1` (one call → 897 boards).
+- **Self-heal** — every live resolve writes back to the runtime cache, so the
+  long tail fills in as machines are imaged.
+- **Refresh + canary** — `.github/workflows/refresh-mapping.yml` (network-gated,
+  weekly + manual) runs `tools/Test-VendorCanary.ps1` against each vendor's
+  known-good vector and regenerates the ASUS catalog into a downloadable artifact
+  (the committed seed stays lean). Separate from the offline `ci.yml`.
+- **Peripherals** — `tools/Get-DeviceIds.ps1` dumps a machine's USB VID:PIDs to
+  capture entries for `config/apps.json`.
+- **Not auto-crawlable** — Gigabyte full enumeration, MSI `MS-xxxx` codes, and the
+  ASRock driver list (see open items); these are seeded/self-healed/manual.
+
 ---
 
 ## Open items (do not silently resolve)
@@ -275,16 +288,23 @@ the shipped seed is kept small for portability.
 4. **MSI `MS-xxxx` code map** — `config/msi-codes.json` ships empty. Populate from
    MSI product pages (verified) so code-reporting boards resolve instead of
    falling back.
-5. **EXE silent-install coverage** — packer flags are best-effort. Grow the map
+5. **Gigabyte full enumeration** — the per-board support page is headless-OK, but
+   the All-Series listing only server-renders a tiny subset; the full catalog
+   loads via an undocumented `modellist` XHR behind Akamai (verified 2026-06-19).
+   So `model → rev-slug` is **not** auto-crawlable headlessly — it's seeded,
+   self-healed, or captured via a browser/DevTools pass. The rev-slug is also not
+   in SMBIOS, so unseeded Gigabyte boards fall back to the support page in Chrome.
+6. **EXE silent-install coverage** — packer flags are best-effort. Grow the map
    from the real packages the shop encounters.
-6. **Thermalright VID:PID list** — the values in `config/apps.json` are
+7. **Thermalright VID:PID list** — the values in `config/apps.json` are
    **community-sourced** from the `thermalright-trcc-linux` project (HID LCD/LED,
-   SCSI, bulk controllers). Confirm against official hardware; treat as a starting
-   point, not authoritative.
-7. **Code signing / SmartScreen** — running an unsigned `bootstrap.ps1` internally
+   SCSI, bulk controllers). Confirm against official hardware (e.g. via
+   `tools/Get-DeviceIds.ps1` on a real build); treat as a starting point.
+8. **Code signing / SmartScreen** — running an unsigned `bootstrap.ps1` internally
    is fine; sign it if distributed.
-8. **Vendor brittleness** — these are undocumented endpoints/markup. Consider a
-   network-gated CI canary that flags when a live call starts returning FAIL or a
-   challenge, separate from the offline unit suite.
-9. **Copyright holder** — resolved: `NOTICE` and SPDX headers use
-   "Nathan M. Fraske, Critical Error Computing L.L.C." (2026-06-19).
+9. **Vendor brittleness** — these are undocumented endpoints/markup. The
+   network-gated canary (`tools/Test-VendorCanary.ps1`, run by
+   `refresh-mapping.yml`) flags when a live call starts returning FAIL/challenge,
+   separate from the offline unit suite.
+10. **Copyright holder** — resolved: `NOTICE` and SPDX headers use
+    "Nathan M. Fraske, Critical Error Computing L.L.C." (2026-06-19).

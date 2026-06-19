@@ -144,9 +144,11 @@ src/
   providers/             Asus / Msi / Gigabyte / Asrock + the provider contract
   apps/AppCatalog.psm1   peripheral -> software matching + install
 config/                  defaults.json, apps.json, mapping.json, msi-codes.json
-tools/Build-AsusMapping.ps1  regenerate ASUS mapping rows from the catalog
+tools/                   Build-AsusMapping.ps1 (catalog refresh), Test-VendorCanary.ps1
+                         (live early-warning), Get-DeviceIds.ps1 (capture VID:PIDs)
 docs/                    vendor contracts, architecture, autounattend, adding a provider
 tests/                   offline Pester suite + recorded fixtures
+.github/workflows/       ci.yml (offline lint+test), refresh-mapping.yml (network-gated)
 ```
 
 ## Development
