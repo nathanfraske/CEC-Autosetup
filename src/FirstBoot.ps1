@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright 2026 CEC-Autosetep contributors
+# Copyright 2026 Nathan M. Fraske, Critical Error Computing L.L.C.
 #
 # FirstBoot.ps1 - the orchestrator. Detect the board, pick the provider, resolve
 # the model, fetch + install drivers headlessly when possible, fall back to Chrome

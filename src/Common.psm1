@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright 2026 CEC-Autosetep contributors
+# Copyright 2026 Nathan M. Fraske, Critical Error Computing L.L.C.
 #
 # Common.psm1 - shared utilities: settings, logging, HTTP, hashing, admin checks.
 # Targets Windows PowerShell 5.1+ (in-box on Windows 10/11). Pure-logic helpers

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright 2026 CEC-Autosetep contributors
+# Copyright 2026 Nathan M. Fraske, Critical Error Computing L.L.C.
 #
 # Detect-Hardware.psm1 - motherboard detection via Win32_BaseBoard, mapped to a
 # provider vendor. The CIM call is isolated so the mapping logic is unit-testable

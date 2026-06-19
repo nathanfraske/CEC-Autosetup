@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright 2026 CEC-Autosetep contributors
+# Copyright 2026 Nathan M. Fraske, Critical Error Computing L.L.C.
 #
 # Build-AsusMapping.ps1 - regenerate ASUS rows in config/mapping.json from the
 # ASUS catalog (one SeriesFilterResult call -> ~897 boards). NETWORK-GATED: run

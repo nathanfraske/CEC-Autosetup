@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright 2026 CEC-Autosetep contributors
+# Copyright 2026 Nathan M. Fraske, Critical Error Computing L.L.C.
 #
 # Gigabyte.psm1 - Gigabyte provider (headless, server-rendered HTML).
 # The support page renders the full driver table; we regex out the CDN URLs,

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright 2026 CEC-Autosetep contributors
+# Copyright 2026 Nathan M. Fraske, Critical Error Computing L.L.C.
 #
 # bootstrap.ps1 - the single first-boot entrypoint. Sets TLS 1.2 and a process
 # ExecutionPolicy of Bypass, self-elevates when needed, locates the engine

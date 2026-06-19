@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright 2026 CEC-Autosetep contributors
+# Copyright 2026 Nathan M. Fraske, Critical Error Computing L.L.C.
 #
 # Install-Chrome.psm1 - the fallback substrate. Detect Chrome, silently install
 # it from Google's enterprise MSI (winget fallback), and open a URL in it so a

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright 2026 CEC-Autosetep contributors
+# Copyright 2026 Nathan M. Fraske, Critical Error Computing L.L.C.
 #
 # Detect-Peripherals.psm1 - enumerate PnP/USB devices so the apps layer can
 # decide which peripheral software to install (e.g. SignalRGB for RGB gear,

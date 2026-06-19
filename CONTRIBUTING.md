@@ -20,7 +20,7 @@ Thanks for helping improve CEC-Autosetep.
 - **Apache-2.0 + SPDX.** Every source file (`.ps1`, `.psm1`) starts with:
   ```powershell
   # SPDX-License-Identifier: Apache-2.0
-  # Copyright 2026 CEC-Autosetep contributors
+  # Copyright 2026 Nathan M. Fraske, Critical Error Computing L.L.C.
   ```
 
 ## Workflow

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright 2026 CEC-Autosetep contributors
+# Copyright 2026 Nathan M. Fraske, Critical Error Computing L.L.C.
 #
 # Install-Engine.psm1 - takes a uniform driver entry through:
 #   download (BITS, Invoke-WebRequest fallback) -> verify hash when present ->

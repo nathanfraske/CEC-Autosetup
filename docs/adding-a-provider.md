@@ -12,7 +12,7 @@ returns a provider object with a fixed shape.
 
 ```powershell
 # SPDX-License-Identifier: Apache-2.0
-# Copyright 2026 CEC-Autosetep contributors
+# Copyright 2026 Nathan M. Fraske, Critical Error Computing L.L.C.
 
 Set-StrictMode -Version Latest
 Import-Module (Join-Path (Split-Path -Parent $PSScriptRoot) 'Common.psm1')   # no -Force (shared module)

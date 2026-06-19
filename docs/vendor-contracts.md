@@ -286,5 +286,5 @@ the shipped seed is kept small for portability.
 8. **Vendor brittleness** — these are undocumented endpoints/markup. Consider a
    network-gated CI canary that flags when a live call starts returning FAIL or a
    challenge, separate from the offline unit suite.
-9. **Copyright holder** — `NOTICE` and SPDX headers use "CEC-Autosetep
-   contributors". Confirm the exact string before a public release.
+9. **Copyright holder** — resolved: `NOTICE` and SPDX headers use
+   "Nathan M. Fraske, Critical Error Computing L.L.C." (2026-06-19).

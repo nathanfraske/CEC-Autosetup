@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright 2026 CEC-Autosetep contributors
+# Copyright 2026 Nathan M. Fraske, Critical Error Computing L.L.C.
 #
 # Asus.psm1 - ASUS provider (headless). Implements the internal JSON API:
 #   1. PDInfo        : model slug -> numeric ProductID
