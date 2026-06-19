@@ -24,7 +24,9 @@
   "gigabyte": {
     "supportBase": "https://www.gigabyte.com/Motherboard",
     "cdnBase": "https://download.gigabyte.com",
-    "challengeMinBytes": 51200
+    "challengeMinBytes": 51200,
+    "modelListUrl": "https://www.gigabyte.com/iisApplicationNuxt/api/proxy/api/v1.0/Consumer/global/GetConsumerListPageModelList/Motherboard",
+    "modelListPerPage": 16
   },
   "asrock": {
     "supportBase": "https://www.asrock.com/mb",

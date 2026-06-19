@@ -27,16 +27,19 @@ jobs:
         shell: pwsh
         run: ./tools/Test-VendorCanary.ps1
 
-  refresh-asus:
-    name: Regenerate ASUS catalog rows
+  refresh-catalog:
+    name: Regenerate ASUS + Gigabyte catalog rows
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build full mapping (ASUS rows + existing seed)
+      - name: Build full mapping (ASUS + Gigabyte rows + existing seed)
         shell: pwsh
         run: |
           Copy-Item config/mapping.json mapping.full.json -Force
           ./tools/Build-AsusMapping.ps1 -MappingPath (Resolve-Path mapping.full.json)
+          # Gigabyte: Akamai may block GitHub runner IPs; don't fail the job if so.
+          try { ./tools/Build-GigabyteMapping.ps1 -MappingPath (Resolve-Path mapping.full.json) }
+          catch { Write-Host "Gigabyte refresh skipped: $($_.Exception.Message)" }
       - name: Upload full mapping artifact
         uses: actions/upload-artifact@v4
         with:

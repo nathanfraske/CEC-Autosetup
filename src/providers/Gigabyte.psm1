@@ -190,6 +190,40 @@ function Get-GigabyteDriverList {
     return $entries
 }
 
+function ConvertFrom-GigabyteModelList {
+    <#
+        .SYNOPSIS
+        Parses a GetConsumerListPageModelList response into catalog rows
+        { Model; Slug; SupportUrl; TotalRow }. Slug comes from productUrl
+        (/Motherboard/<SLUG>, including any -rev-...). Pure - feed it a JSON body.
+        Used by tools/Build-GigabyteMapping.ps1 for catalog enumeration.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string] $JsonText)
+
+    try { $json = $JsonText | ConvertFrom-Json } catch { return @() }
+    $data = if ($json.PSObject.Properties['data']) { $json.data } else { $json }
+    $list = if ($data -and $data.PSObject.Properties['modelList']) { $data.modelList } else { $null }
+    if (-not $list) { return @() }
+    $total = if ($data.PSObject.Properties['totalRow']) { [int]$data.totalRow } else { 0 }
+
+    $base = (Get-Settings).gigabyte.supportBase -replace '/Motherboard$', ''
+    $out = New-Object System.Collections.Generic.List[object]
+    foreach ($m in $list) {
+        $name = [string]$m.productName
+        $url  = [string]$m.productUrl
+        if ([string]::IsNullOrWhiteSpace($name) -or [string]::IsNullOrWhiteSpace($url)) { continue }
+        $slug = ($url -replace '^/Motherboard/', '').Trim('/')
+        $out.Add([pscustomobject]@{
+            Model      = $name
+            Slug       = $slug
+            SupportUrl = ('{0}{1}/support' -f $base, $url)
+            TotalRow   = $total
+        }) | Out-Null
+    }
+    return $out.ToArray()
+}
+
 function Get-GigabyteFallbackUrl {
     [CmdletBinding()]
     param($Identity, [string] $Model)
@@ -210,5 +244,5 @@ function Get-GigabyteProvider {
 Export-ModuleMember -Function `
     Get-GigabyteHeaders, Get-GigabyteSlug, Resolve-GigabyteProduct, `
     Test-GigabyteChallenge, Get-GigabyteCategory, Get-GigabyteDriverEntry, `
-    ConvertFrom-GigabyteSupport, Get-GigabyteDriverList, Get-GigabyteFallbackUrl, `
-    Get-GigabyteProvider
+    ConvertFrom-GigabyteSupport, ConvertFrom-GigabyteModelList, Get-GigabyteDriverList, `
+    Get-GigabyteFallbackUrl, Get-GigabyteProvider

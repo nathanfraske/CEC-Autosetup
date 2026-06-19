@@ -190,22 +190,38 @@ package, one non-`mb_driver` `PreInstall_9.3.2.255` RAID file). Chipset driver
 
 ---
 
-## 4. ASRock — browser-required, NOT headless ⚠️
+## 4. ASRock — contract captured, but browser-required ⚠️
 
-- `www.asrock.com` is behind **Incapsula / Imperva**: plain HTTP (any UA,
-  including Googlebot) returns a JS challenge stub.
-- The product page does **not** server-render the driver/BIOS lists; they load
-  via a client-side XHR. (The *Manual* section *is* server-rendered — a red
-  herring. Manuals are reachable, drivers are not.)
-- ⇒ A headless fetch yields manuals, not drivers. **`SupportsHeadless = $false`.**
-- `download.asrock.com` CDN is **open** (verified:
-  `https://download.asrock.com/Manual/X870E%20Taichi.pdf` → HTTP 200
-  `application/pdf`), so downloads work once URLs are known.
+**Contract (captured 2026-06-19, browser):** the Download tab is **not** a JSON
+XHR — it loads a static HTML fragment from the board's own directory via jQuery
+`.load()`:
 
-**Behaviour:** fallback-only. Resolves
-`https://www.asrock.com/mb/{AMD|Intel}/{Model}/index.asp#Download` (AMD/Intel
-chosen from the chipset token) and hands it to the Chrome fallback. Verified for
-`X870E Taichi` → `https://www.asrock.com/mb/AMD/X870E%20Taichi/index.asp#Download`.
+```
+GET https://www.asrock.com/mb/<Brand>/<Model>/Download.html
+```
+(siblings `BIOS.html`, `Manual.html`). Rows: a description `"<name> ver:<version>"`,
+a `SHA256:<hex>` line, and Global/China links on `download.asrock.com`:
+```
+https://download.asrock.com/Drivers/All/<Category>/<Name>(v<version>).zip
+```
+`Category`, `Name`, and `Version` are derivable from that URL alone
+(`ConvertFrom-AsrockDownloadHtml` parses it; verified against the captured Realtek
+audio row → `…/Drivers/All/Audio/Realtek_Audio(v2422_UAD_WHQL).zip`).
+
+**Headless blocker (verified):** `www.asrock.com` is behind **Incapsula**, which
+serves a ~212-byte JS-challenge stub (containing `_Incapsula_Resource`) to
+non-browser clients — **even when carrying the board page's cookies**, because
+clearance requires executing the challenge JS. A cookie-jar `curl`/`Invoke-WebRequest`
+of both the board page and `Download.html` returned the stub (re-verified here
+2026-06-19). So plain PowerShell cannot fetch the fragment ⇒ **`SupportsHeadless
+= $false`**, ASRock routes to the Chrome fallback
+(`…/mb/{AMD|Intel}/{Model}/index.asp#Download`).
+
+**Ready to flip:** the parser, the `Download.html` URL builder, the Incapsula
+challenge guard, and `Get-DriverList` (fetch → detect-challenge → parse) are all
+implemented and tested. Flip `SupportsHeadless` to `$true` the day a JS-capable
+fetch supplies the fragment/cookies (the tool driving headless Chrome, or a
+browser agent). `download.asrock.com` CDN is open (manual PDF → HTTP 200).
 
 ---
 
@@ -304,32 +320,38 @@ the shipped seed is kept small for portability.
   weekly + manual) runs `tools/Test-VendorCanary.ps1` against each vendor's
   known-good vector and regenerates the ASUS catalog into a downloadable artifact
   (the committed seed stays lean). Separate from the offline `ci.yml`.
+- **Gigabyte** — `tools/Build-GigabyteMapping.ps1` enumerates the catalog via the
+  `modellist` API (captured 2026-06-19) → `model → rev-slug` rows. Akamai blocks
+  datacenter IPs, so run from a normal network / the scheduled job.
 - **Peripherals** — `tools/Get-DeviceIds.ps1` dumps a machine's USB VID:PIDs to
   capture entries for `config/apps.json`.
-- **Not auto-crawlable** — Gigabyte full enumeration, MSI `MS-xxxx` codes, and the
-  ASRock driver list (see open items); these are seeded/self-healed/manual.
+- **Browser-only** — the ASRock driver fragment (Incapsula JS challenge) and the
+  HYTE/Thermalright USB VID:PIDs still need a browser or real hardware.
 
 ---
 
 ## Open items (do not silently resolve)
 
-1. **ASRock driver XHR endpoint** — not captured. Needs a real browser / DevTools
-   session (or Claude-in-Chrome) to record. Until then ASRock is fallback-only.
-   See `TODO(asrock-xhr)` in `src/providers/Asrock.psm1`.
+1. **ASRock headless fetch** — contract **captured** (the `Download.html` fragment;
+   parser implemented). Remaining blocker: Incapsula's JS challenge stops a
+   non-browser fetch (re-verified 2026-06-19), so `SupportsHeadless=$false` until a
+   JS-capable fetch (headless Chrome / browser agent) supplies the fragment. See
+   the ASRock section above and `src/providers/Asrock.psm1`.
 2. **Per-board ASUS `osid`** — `52` covers current Intel/AMD desktop boards;
    exotic boards or other OSes may differ. The probe in `Get-AsusDriverList`
    mitigates this, but the candidate list (`config/defaults.json`) is best-effort.
 3. **MSI / Gigabyte Akamai throttling** — both `www` hosts are Akamai-fronted.
    Keep request pacing conservative; treat a sudden `Access Denied` as throttling.
-4. **MSI `MS-xxxx` code map** — `config/msi-codes.json` ships empty. Populate from
-   MSI product pages (verified) so code-reporting boards resolve instead of
-   falling back.
-5. **Gigabyte full enumeration** — the per-board support page is headless-OK, but
-   the All-Series listing only server-renders a tiny subset; the full catalog
-   loads via an undocumented `modellist` XHR behind Akamai (verified 2026-06-19).
-   So `model → rev-slug` is **not** auto-crawlable headlessly — it's seeded,
-   self-healed, or captured via a browser/DevTools pass. The rev-slug is also not
-   in SMBIOS, so unseeded Gigabyte boards fall back to the support page in Chrome.
+4. **MSI `MS-xxxx` code map** — the board code is the BIOS-filename prefix on the
+   model's BIOS panel (`type=bios`); e.g. files `7D75v1x` ⇒ `MS-7D75`. Verified
+   2026-06-19: **MS-7D75 = MAG B650 TOMAHAWK WIFI** (seeded in
+   `config/msi-codes.json`; corrects the runbook's `MS-7E26` placeholder, which is
+   a different board). Add more pairs as the shop encounters coded boards.
+5. **Gigabyte enumeration** — **captured**: `POST .../GetConsumerListPageModelList/Motherboard`
+   (`{page,fid:"",order:0,length:50}`) returns `data.modelList[]` (`productName`,
+   `productUrl` with `-rev-…`) + `data.totalRow`; `data.perPage` is 16.
+   `tools/Build-GigabyteMapping.ps1` pages through it to populate the Gigabyte
+   mapping rows. Akamai blocks datacenter IPs, so run from a normal network.
 6. **EXE silent-install coverage** — packer flags are best-effort. Grow the map
    from the real packages the shop encounters.
 7. **Thermalright VID:PID list** — the values in `config/apps.json` are

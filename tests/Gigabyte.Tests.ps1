@@ -59,6 +59,25 @@ Describe 'Gigabyte: support page parsing (fixture)' {
     }
 }
 
+Describe 'Gigabyte: catalog modellist parsing (fixture)' {
+    BeforeAll {
+        $json = Get-Content (Join-Path $script:fixtures 'gigabyte_modellist.json') -Raw
+        $script:models = ConvertFrom-GigabyteModelList -JsonText $json
+        $script:byModel = @{}
+        foreach ($m in $script:models) { $script:byModel[$m.Model] = $m }
+    }
+    It 'extracts model rows' {
+        @($script:models).Count | Should -Be 3
+    }
+    It 'derives the rev-slug from productUrl' {
+        $script:byModel['A520M H ARGB'].Slug | Should -Be 'A520M-H-ARGB-rev-11'
+        $script:byModel['B650 GAMING X AX V2'].Slug | Should -Be 'B650-GAMING-X-AX-V2-rev-10-11-12'
+    }
+    It 'builds the support URL' {
+        $script:byModel['A520M H ARGB'].SupportUrl | Should -Be 'https://www.gigabyte.com/Motherboard/A520M-H-ARGB-rev-11/support'
+    }
+}
+
 Describe 'Gigabyte: provider object' {
     It 'advertises headless support' {
         (Get-GigabyteProvider).SupportsHeadless | Should -BeTrue

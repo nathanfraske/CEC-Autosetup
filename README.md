@@ -188,8 +188,9 @@ src/
 config/                  defaults.json, apps.json, mapping.json, msi-codes.json,
                          tweaks.json (provisioning), tiers.json (wallpaper tiers)
 wallpapers/              per-tier wallpaper images (you supply; shipped on the USB)
-tools/                   Build-AsusMapping.ps1 (catalog refresh), Test-VendorCanary.ps1
-                         (live early-warning), Get-DeviceIds.ps1 (capture VID:PIDs)
+tools/                   Build-AsusMapping.ps1 + Build-GigabyteMapping.ps1 (catalog
+                         refresh), Test-VendorCanary.ps1 (live early-warning),
+                         Get-DeviceIds.ps1 (capture VID:PIDs)
 docs/                    vendor contracts, architecture, autounattend, provisioning, adding a provider
 tests/                   offline Pester suite + recorded fixtures
 .github/workflows/       ci.yml (offline lint+test), refresh-mapping.yml (network-gated)

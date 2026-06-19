@@ -1,25 +1,28 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Nathan M. Fraske, Critical Error Computing L.L.C.
 #
-# Asrock.psm1 - ASRock provider (fallback-only).
+# Asrock.psm1 - ASRock provider.
 #
-# www.asrock.com is behind Incapsula/Imperva and the driver/BIOS lists load via
-# a client-side XHR, so a headless fetch yields manuals, not drivers. This
-# provider therefore reports SupportsHeadless=$false and routes to the Chrome
-# fallback with the model's index.asp#Download page. The download CDN
-# (download.asrock.com) is open, so downloads work once URLs are known.
+# Captured contract (2026-06-19, browser): the Download tab loads a static HTML
+# fragment from the board's own directory via jQuery .load():
+#   GET https://www.asrock.com/mb/<Brand>/<Model>/Download.html
+# Rows: description "<name> ver:<version>", a "SHA256:<hex>" line, and Global/China
+# links on download.asrock.com:
+#   https://download.asrock.com/Drivers/All/<Category>/<Name>(v<version>).zip
 #
-# TODO(asrock-xhr): The driver XHR endpoint behind www.asrock.com is NOT
-# publicly documented and has not been captured. Recording it requires a real
-# browser DevTools session (or a browser agent / Claude-in-Chrome). Until then,
-# ASRock stays fallback-only. Do NOT invent an endpoint to make a test pass.
-# See docs/vendor-contracts.md (2.4) and its "Open items" section.
+# HEADLESS BLOCKER (verified): www.asrock.com is behind Incapsula, which serves a
+# ~212-byte JS-challenge stub (with _Incapsula_Resource) to non-browser clients -
+# even when carrying the board page's cookies, because clearance requires running
+# the challenge JS. Plain PowerShell/Invoke-WebRequest therefore cannot fetch the
+# fragment, so SupportsHeadless stays $false and ASRock routes to the Chrome
+# fallback. The parser + URL builder below are ready: flip SupportsHeadless to
+# $true the day a JS-capable fetch path supplies the fragment (e.g. the tool
+# driving headless Chrome, or a browser agent handing over the HTML/cookies).
+# See docs/vendor-contracts.md (ASRock).
 
 Set-StrictMode -Version Latest
 Import-Module (Join-Path (Split-Path -Parent $PSScriptRoot) 'Common.psm1')
 
-# Per the provider contract, exposed both as a module variable and via the
-# factory's SupportsHeadless property.
 $script:SupportsHeadless = $false
 
 $script:AmdChipsets = @(
@@ -37,8 +40,7 @@ function Get-AsrockPlatform {
     <#
         .SYNOPSIS
         Classifies a model as 'AMD' or 'Intel' from its chipset token. Defaults to
-        'AMD' (with a logged warning) when the chipset is unrecognized; the result
-        only affects the fallback URL path segment.
+        'AMD' (with a logged warning) when unrecognized; only affects the URL path.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string] $Model)
@@ -46,8 +48,19 @@ function Get-AsrockPlatform {
     $first = ($Model.Trim() -split '\s+')[0].ToUpperInvariant()
     foreach ($c in $script:AmdChipsets)   { if ($first.StartsWith($c)) { return 'AMD' } }
     foreach ($c in $script:IntelChipsets) { if ($first.StartsWith($c)) { return 'Intel' } }
-    Write-Log "ASRock: could not classify '$Model' as AMD/Intel; defaulting to AMD for the fallback URL." -Level Warn
+    Write-Log "ASRock: could not classify '$Model' as AMD/Intel; defaulting to AMD for the URL." -Level Warn
     return 'AMD'
+}
+
+function Get-AsrockDownloadUrl {
+    <#
+        .SYNOPSIS
+        The board's Download.html fragment URL (the jQuery .load() target).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string] $Platform, [Parameter(Mandatory)][string] $Model)
+    $enc = [uri]::EscapeDataString($Model.Trim())
+    return ('{0}/{1}/{2}/Download.html' -f (Get-Settings).asrock.supportBase, $Platform, $enc)
 }
 
 function Resolve-AsrockProduct {
@@ -56,25 +69,86 @@ function Resolve-AsrockProduct {
 
     $platform = Get-AsrockPlatform -Model $Model
     $enc = [uri]::EscapeDataString($Model.Trim())
-    $url = ('{0}/{1}/{2}/index.asp#Download' -f (Get-Settings).asrock.supportBase, $platform, $enc)
-
     return [pscustomobject]@{
-        Vendor     = 'asrock'
-        Model      = $Model
-        Platform   = $platform
-        SupportUrl = $url
+        Vendor          = 'asrock'
+        Model           = $Model
+        Platform        = $platform
+        SupportUrl      = ('{0}/{1}/{2}/index.asp#Download' -f (Get-Settings).asrock.supportBase, $platform, $enc)
+        DownloadHtmlUrl = Get-AsrockDownloadUrl -Platform $platform -Model $Model
     }
+}
+
+function Test-AsrockChallenge {
+    <#
+        .SYNOPSIS
+        $true if the body is an Incapsula challenge stub rather than the fragment.
+    #>
+    [CmdletBinding()]
+    param([AllowNull()][AllowEmptyString()][string] $Content)
+    if ([string]::IsNullOrWhiteSpace($Content)) { return $true }
+    if ($Content -match '_Incapsula_Resource|Incapsula incident') { return $true }
+    return ($Content.Length -lt 1024)
+}
+
+function ConvertFrom-AsrockDownloadHtml {
+    <#
+        .SYNOPSIS
+        Parses a Download.html fragment into uniform driver entries. Category, Name,
+        and Version come from the download.asrock.com URL
+        (/Drivers/All/<Category>/<Name>(v<version>).zip); deduped by URL.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string] $Html)
+
+    $pattern = 'https://download\.asrock\.com/Drivers/(?:All/)?(?<cat>[^/]+)/(?<file>[^"''<>\s]+?)\.zip'
+    $seen = New-Object System.Collections.Generic.HashSet[string]
+    $entries = New-Object System.Collections.Generic.List[object]
+
+    foreach ($m in [regex]::Matches($Html, $pattern)) {
+        $url = $m.Value
+        if (-not $seen.Add($url)) { continue }
+        $cat  = $m.Groups['cat'].Value
+        $file = $m.Groups['file'].Value
+        $name = $file
+        $version = ''
+        $vm = [regex]::Match($file, '^(?<name>.+?)\(v(?<ver>[^)]+)\)$')
+        if ($vm.Success) { $name = $vm.Groups['name'].Value; $version = $vm.Groups['ver'].Value }
+        $entries.Add([pscustomobject]@{
+            Provider = 'asrock'
+            Category = $cat
+            Name     = $name
+            Version  = $version
+            Url      = $url
+            Hash     = ''           # SHA256 line present in fragment; per-row mapping TBD
+            HashAlg  = 'SHA256'
+        }) | Out-Null
+    }
+    return $entries.ToArray()
 }
 
 function Get-AsrockDriverList {
     <#
         .SYNOPSIS
-        Always throws: ASRock cannot be listed headlessly (see module TODO).
+        Attempts the Download.html fragment and parses it. Throws on the Incapsula
+        challenge (the headless case today) so the orchestrator falls back to the
+        browser. Wired and tested for the day a JS-capable fetch is available.
     #>
     [CmdletBinding()]
     param($Identity, [int] $Osid = 0)
-    throw [System.NotSupportedException]::new(
-        'ASRock driver listing is not available headlessly (Incapsula + client-side XHR). Use the Chrome fallback. See Asrock.psm1 TODO(asrock-xhr).')
+
+    $url = if ($Identity -and $Identity.DownloadHtmlUrl) { $Identity.DownloadHtmlUrl }
+           else { Get-AsrockDownloadUrl -Platform (Get-AsrockPlatform -Model $Identity.Model) -Model $Identity.Model }
+
+    $html = $null
+    try { $html = Invoke-Http -Url $url -Headers (@{ 'X-Requested-With' = 'XMLHttpRequest' }) } catch { }
+    if (Test-AsrockChallenge -Content $html) {
+        throw [System.NotSupportedException]::new(
+            "ASRock returned an Incapsula challenge for $url (browser required). Use the Chrome fallback.")
+    }
+    $entries = ConvertFrom-AsrockDownloadHtml -Html $html
+    if (@($entries).Count -eq 0) { throw "ASRock Download.html yielded 0 drivers for $url." }
+    Write-Log "ASRock parsed $(@($entries).Count) driver(s) from Download.html." -Level Success
+    return $entries
 }
 
 function Get-AsrockFallbackUrl {
@@ -87,7 +161,7 @@ function Get-AsrockFallbackUrl {
 function Get-AsrockProvider {
     [pscustomobject]@{
         Name             = 'asrock'
-        SupportsHeadless = $false
+        SupportsHeadless = $false   # Incapsula JS challenge blocks non-browser fetch (see header)
         ResolveProduct   = ${function:Resolve-AsrockProduct}
         GetDriverList    = ${function:Get-AsrockDriverList}
         GetFallbackUrl   = ${function:Get-AsrockFallbackUrl}
@@ -95,5 +169,6 @@ function Get-AsrockProvider {
 }
 
 Export-ModuleMember -Function `
-    Get-AsrockPlatform, Resolve-AsrockProduct, Get-AsrockDriverList, `
+    Get-AsrockPlatform, Get-AsrockDownloadUrl, Resolve-AsrockProduct, `
+    Test-AsrockChallenge, ConvertFrom-AsrockDownloadHtml, Get-AsrockDriverList, `
     Get-AsrockFallbackUrl, Get-AsrockProvider

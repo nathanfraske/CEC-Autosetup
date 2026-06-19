@@ -190,7 +190,9 @@ function Invoke-Http {
         [int] $TimeoutSec,
         [int] $Retries,
         [int] $BackoffBaseMs,
-        [string] $Method = 'GET'
+        [string] $Method = 'GET',
+        [string] $Body,
+        [string] $ContentType
     )
 
     Set-Tls12
@@ -219,6 +221,8 @@ function Invoke-Http {
                 ErrorAction     = 'Stop'
             }
             if ($OutFile) { $params['OutFile'] = $OutFile }
+            if ($PSBoundParameters.ContainsKey('Body') -and $Body) { $params['Body'] = $Body }
+            if ($ContentType) { $params['ContentType'] = $ContentType }
 
             $resp = Invoke-WebRequest @params
             if ($OutFile) { return $OutFile }

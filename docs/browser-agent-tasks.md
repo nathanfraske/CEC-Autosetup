@@ -11,6 +11,19 @@ listed; do not guess values. Mark each with the capture date.
 > and load the data via client-side XHR, so a plain fetch returns a challenge stub
 > or a page without the data. See `docs/vendor-contracts.md`.
 
+## Status (captured 2026-06-19 via Claude-in-Chrome)
+
+- ✅ **Task 1 (ASRock)** — contract captured (`Download.html` fragment). Parser +
+  URL builder implemented in `Asrock.psm1`. Still **fallback-only**: re-verified
+  that Incapsula's JS challenge blocks a non-browser fetch even with cookies.
+- ✅ **Task 2 (Gigabyte modellist)** — captured; `tools/Build-GigabyteMapping.ps1`
+  implemented against the `GetConsumerListPageModelList` API.
+- ✅ **Task 3 (MSI code)** — captured via the BIOS-filename prefix:
+  **MS-7D75 = MAG B650 TOMAHAWK WIFI** (seeded in `config/msi-codes.json`).
+  Re-run the BIOS-panel check for other boards to extend the map.
+- ⬜ **Task 4 (Thermalright / HYTE VID:PID)** — still open (needs an installer
+  download + `.inf` parse, or real hardware via `tools/Get-DeviceIds.ps1`).
+
 ---
 
 ## 1. ASRock — driver-list XHR endpoint  (highest value)
