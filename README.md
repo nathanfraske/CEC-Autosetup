@@ -88,6 +88,7 @@ See [`docs/autounattend.md`](docs/autounattend.md) to wire this into
 | `-SkipTweaks` | Skip the provisioning phase (default browser, taskbar, OneDrive/Copilot, wallpaper). |
 | `-Tier <name>` | Ship tier → wallpaper (e.g. `-Tier Dreadnought`); see [provisioning](docs/provisioning.md). |
 | `-InstallApps a,b` | Force-install named catalog apps regardless of detection (e.g. `-InstallApps "Hyte Nexus"`). |
+| `-Mirror <url>` | Pull drivers from a [local LAN mirror](docs/driver-library.md) first (e.g. `http://10.0.0.10:8080`). |
 | `-Model` / `-Vendor` | Override hardware detection (testing / odd boards). |
 
 ## Supported boards
@@ -141,6 +142,25 @@ device-name patterns; installed via winget or the Chrome fallback. Defined in
 > dGPU, AMD iGPU + Intel Arc) all get each vendor's driver. `-SkipGpu` skips the
 > NVIDIA headless driver step.
 
+## Local driver library (LAN mirror)
+
+For a bench imaging many machines: pre-pull **current + last-generation** board
+drivers onto an Ubuntu box once, serve them on the LAN, and have first-boot
+clients grab from there — fast and offline-from-the-internet.
+
+```bash
+# On the Ubuntu host (needs pwsh):
+pwsh -File tools/Build-AsusMapping.ps1 ; pwsh -File tools/Build-GigabyteMapping.ps1
+pwsh -File tools/Build-DriverLibrary.ps1 -OutputDir /srv/cec-drivers   # current+last-gen
+# Serve with nginx + systemd (see docs), then on each client:
+#   bootstrap.ps1 -Mirror http://10.0.0.10:8080
+```
+
+Mirror-first, vendor-fallback: the client pulls the driver list **and** files
+(hash-verified) from the mirror when the board is present, else uses the normal
+online path. Scope is `config/library-chipsets.json`. Full guide:
+[`docs/driver-library.md`](docs/driver-library.md).
+
 ## Provisioning (tweaks phase)
 
 After drivers/GPU/apps, a **provisioning phase** applies shop tweaks (skip with
@@ -181,17 +201,19 @@ src/
   Install-Gpu.psm1       NVIDIA headless driver lookup + silent install
   Tweaks.psm1            provisioning: default browser, taskbar, OneDrive/Copilot, wallpaper
   Mapping.psm1           naming reconciliation + model->vendor cache (self-heal)
+  DriverLibrary.psm1     local LAN mirror source (mirror-first, vendor-fallback)
   Install-Engine.psm1    download -> verify -> extract -> pnputil/EXE install
   Install-Chrome.psm1    silent Chrome install + open-url fallback substrate
   providers/             Asus / Msi / Gigabyte / Asrock + the provider contract
   apps/AppCatalog.psm1   peripheral -> software matching + install
 config/                  defaults.json, apps.json, mapping.json, msi-codes.json,
-                         tweaks.json (provisioning), tiers.json (wallpaper tiers)
+                         tweaks.json, tiers.json, library-boards.json, library-chipsets.json
 wallpapers/              per-tier wallpaper images (you supply; shipped on the USB)
-tools/                   Build-AsusMapping.ps1 + Build-GigabyteMapping.ps1 (catalog
-                         refresh), Test-VendorCanary.ps1 (live early-warning),
-                         Get-DeviceIds.ps1 (capture VID:PIDs)
-docs/                    vendor contracts, architecture, autounattend, provisioning, adding a provider
+tools/                   catalog refresh (Build-AsusMapping/Build-GigabyteMapping),
+                         driver library (Build-/Serve-DriverLibrary), Test-VendorCanary,
+                         Get-DeviceIds; nginx/ + systemd/ units for the LAN mirror
+docs/                    vendor contracts, architecture, autounattend, provisioning,
+                         driver-library, browser-agent-tasks, adding a provider
 tests/                   offline Pester suite + recorded fixtures
 .github/workflows/       ci.yml (offline lint+test), refresh-mapping.yml (network-gated)
 ```

@@ -23,6 +23,7 @@ param(
     [switch]   $SkipTweaks,
     [string]   $Tier,
     [string[]] $InstallApps,
+    [string]   $Mirror,
     [string]   $Model,
     [string]   $Vendor
 )
@@ -36,6 +37,7 @@ Import-Module (Join-Path $here 'Detect-Peripherals.psm1') -Force
 Import-Module (Join-Path $here 'Detect-Gpu.psm1') -Force
 Import-Module (Join-Path $here 'Install-Gpu.psm1') -Force
 Import-Module (Join-Path $here 'Mapping.psm1') -Force
+Import-Module (Join-Path $here 'DriverLibrary.psm1') -Force
 Import-Module (Join-Path $here 'Install-Engine.psm1') -Force
 Import-Module (Join-Path $here 'Install-Chrome.psm1') -Force
 Import-Module (Join-Path $here 'Tweaks.psm1') -Force
@@ -132,33 +134,49 @@ if ($board.Vendor -eq 'msi') {
 
 $driverResults = New-Object System.Collections.Generic.List[object]
 $fallbackOpened = $false
+$drivers = $null
+$driverSource = 'vendor'
+$provider = $null
+$identity = $null
 
-if (-not $board.Vendor) {
-    Write-Log "Unrecognised motherboard manufacturer; no driver provider. Skipping driver phase." -Level Warn
-} else {
-    $provider = Get-Provider -Vendor $board.Vendor
-    if (-not $provider) {
-        Write-Log "No provider registered for vendor '$($board.Vendor)'." -Level Warn
-    } else {
-        Write-Log "Provider: $($provider.Name) (headless=$($provider.SupportsHeadless)); resolving '$resolveModel'$(if($resolveSlug){" (slug $resolveSlug)"})" -Level Info
+# Mirror base: -Mirror overrides config/defaults.json mirror.baseUrl.
+$mirrorBase = if ($Mirror) { $Mirror }
+              elseif ($settings.mirror.enabled -and $settings.mirror.baseUrl) { [string]$settings.mirror.baseUrl }
+              else { $null }
 
-        $identity = $null
-        try { $identity = & $provider.ResolveProduct $resolveModel $resolveSlug } catch { Write-Log "Resolve failed: $($_.Exception.Message)" -Level Warn }
-
-        $drivers = $null
-        $headlessFailed = $false
-        if ($provider.SupportsHeadless -and $identity) {
-            try {
-                $drivers = & $provider.GetDriverList $identity $Osid
-            } catch {
-                Write-Log "Headless driver list failed: $($_.Exception.Message)" -Level Warn
-                $headlessFailed = $true
-            }
+# 1) Local driver mirror first (LAN; works offline-from-internet).
+if ($mirrorBase) {
+    Write-Log "Checking local driver mirror: $mirrorBase" -Level Info
+    try {
+        $index = Get-LibraryIndex -MirrorBase $mirrorBase
+        $libEntries = if ($index) { Find-LibraryEntries -Index $index -Model $board.Model } else { @() }
+        if (@($libEntries).Count -gt 0) {
+            $drivers = @($libEntries | ForEach-Object { ConvertTo-MirrorDriverEntry -LibEntry $_ -MirrorBase $mirrorBase })
+            $driverSource = "mirror ($mirrorBase)"
+            Write-Log "Driver source: local mirror - $(@($drivers).Count) entr(ies) for '$($board.Model)'." -Level Success
+        } else {
+            Write-Log "Mirror has no entry for '$($board.Model)'; using vendor." -Level Info
         }
+    } catch { Write-Log "Mirror lookup failed: $($_.Exception.Message); using vendor." -Level Warn }
+}
 
-        if ($drivers) {
-            # Self-heal the mapping cache after a successful headless resolve.
-            if (-not $mapEntry) {
+# 2) Vendor path (only when the mirror did not supply the drivers).
+if (-not $drivers) {
+    if (-not $board.Vendor) {
+        Write-Log "Unrecognised motherboard manufacturer; no driver provider." -Level Warn
+    } else {
+        $provider = Get-Provider -Vendor $board.Vendor
+        if (-not $provider) {
+            Write-Log "No provider registered for vendor '$($board.Vendor)'." -Level Warn
+        } else {
+            Write-Log "Provider: $($provider.Name) (headless=$($provider.SupportsHeadless)); resolving '$resolveModel'$(if($resolveSlug){" (slug $resolveSlug)"})" -Level Info
+            try { $identity = & $provider.ResolveProduct $resolveModel $resolveSlug } catch { Write-Log "Resolve failed: $($_.Exception.Message)" -Level Warn }
+            if ($provider.SupportsHeadless -and $identity) {
+                try { $drivers = & $provider.GetDriverList $identity $Osid }
+                catch { Write-Log "Headless driver list failed: $($_.Exception.Message)" -Level Warn }
+            }
+            if ($drivers -and -not $mapEntry) {
+                # Self-heal the mapping cache after a successful headless resolve.
                 try {
                     $fb = & $provider.GetFallbackUrl $identity $resolveModel
                     Save-MappingEntry -Model $board.Model -Entry ([pscustomobject]@{
@@ -168,40 +186,46 @@ if (-not $board.Vendor) {
                     })
                 } catch { Write-Log "Mapping self-heal skipped: $($_.Exception.Message)" -Level Debug }
             }
-
-            $kept = Select-Drivers -Drivers $drivers -AllowCategories $Categories `
-                -DenyDefault $settings.categories.denyDefault -IncludeBiosEntries:$IncludeBios
-            Write-Log "Selected $(@($kept).Count) of $(@($drivers).Count) driver file(s) to process." -Level Info
-
-            $idx = 0
-            $tot = @($kept).Count
-            foreach ($entry in $kept) {
-                $idx++
-                Write-Progress -Id 0 -Activity "$(Get-AppName): installing drivers" `
-                    -Status "[$idx/$tot] $($entry.Category) - $($entry.Name)" `
-                    -PercentComplete ([int](($idx / [Math]::Max(1, $tot)) * 100))
-                if ([string]$entry.Category -match '(?i)bios|firmware') {
-                    Write-Log "BIOS listed (NOT flashed): $($entry.Name) $($entry.Version)" -Level Warn
-                    $driverResults.Add([pscustomobject]@{ Name = $entry.Name; Category = $entry.Category; Version = $entry.Version; Method = 'bios'; Status = 'ListedOnly'; Detail = $entry.Url }) | Out-Null
-                    continue
-                }
-                $r = Install-DriverPackage -Entry $entry
-                $driverResults.Add($r) | Out-Null
-            }
-            Write-Progress -Id 0 -Activity "$(Get-AppName): installing drivers" -Completed
         }
+    }
+}
 
-        # Fallback to Chrome when headless is unsupported, failed, or unresolved.
-        if (-not $provider.SupportsHeadless -or $headlessFailed -or -not $identity) {
-            $fallbackUrl = if ($mapEntry -and $mapEntry.downloadPage) { [string]$mapEntry.downloadPage }
-                           else { & $provider.GetFallbackUrl $identity $resolveModel }
-            Write-Log "Falling back to browser for $($provider.Name): $fallbackUrl" -Level Warn
-            Open-Url -Url $fallbackUrl
-            $fallbackOpened = $true
-            Write-Log "OPERATOR CHECKLIST - download + install from the page above:" -Level Info
-            foreach ($c in 'Chipset', 'LAN / Ethernet', 'Wi-Fi / Wireless', 'Bluetooth', 'Audio', 'Graphics (VGA)', 'Storage (SATA/RAID)') {
-                Write-Log "    [ ] $c driver" -Level Info
-            }
+# 3) Install whatever the source produced (mirror or vendor share this path).
+if ($drivers) {
+    $kept = Select-Drivers -Drivers $drivers -AllowCategories $Categories `
+        -DenyDefault $settings.categories.denyDefault -IncludeBiosEntries:$IncludeBios
+    Write-Log "Selected $(@($kept).Count) of $(@($drivers).Count) driver file(s) from $driverSource." -Level Info
+
+    $idx = 0
+    $tot = @($kept).Count
+    foreach ($entry in $kept) {
+        $idx++
+        Write-Progress -Id 0 -Activity "$(Get-AppName): installing drivers" `
+            -Status "[$idx/$tot] $($entry.Category) - $($entry.Name)" `
+            -PercentComplete ([int](($idx / [Math]::Max(1, $tot)) * 100))
+        if ([string]$entry.Category -match '(?i)bios|firmware') {
+            Write-Log "BIOS listed (NOT flashed): $($entry.Name) $($entry.Version)" -Level Warn
+            $driverResults.Add([pscustomobject]@{ Name = $entry.Name; Category = $entry.Category; Version = $entry.Version; Method = 'bios'; Status = 'ListedOnly'; Detail = $entry.Url }) | Out-Null
+            continue
+        }
+        $r = Install-DriverPackage -Entry $entry
+        $driverResults.Add($r) | Out-Null
+    }
+    Write-Progress -Id 0 -Activity "$(Get-AppName): installing drivers" -Completed
+}
+
+# 4) Chrome fallback when neither mirror nor vendor produced drivers.
+if (-not $drivers) {
+    $fallbackUrl = $null
+    if ($mapEntry -and $mapEntry.downloadPage) { $fallbackUrl = [string]$mapEntry.downloadPage }
+    elseif ($provider) { $fallbackUrl = & $provider.GetFallbackUrl $identity $resolveModel }
+    if ($fallbackUrl) {
+        Write-Log "Falling back to browser: $fallbackUrl" -Level Warn
+        Open-Url -Url $fallbackUrl
+        $fallbackOpened = $true
+        Write-Log "OPERATOR CHECKLIST - download + install from the page above:" -Level Info
+        foreach ($c in 'Chipset', 'LAN / Ethernet', 'Wi-Fi / Wireless', 'Bluetooth', 'Audio', 'Graphics (VGA)', 'Storage (SATA/RAID)') {
+            Write-Log "    [ ] $c driver" -Level Info
         }
     }
 }

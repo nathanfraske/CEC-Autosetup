@@ -1,0 +1,9 @@
+{
+  "_comment": "Boards to pre-pull into the local driver library (tools/Build-DriverLibrary.ps1). Each entry: vendor (asus|msi|gigabyte), model, optional slug (Gigabyte needs the rev-slug; get it from Build-GigabyteMapping or config/mapping.json), optional osid (ASUS, default probes). ASRock can't be pulled headlessly (Incapsula) - it stays client browser-fallback. Seeded with the verified vectors; expand toward your current-gen lineup. Tip: generate candidates from config/mapping.json (filter by chipset) to grow this quickly.",
+  "boards": [
+    { "vendor": "asus",     "model": "ROG STRIX Z490-I GAMING" },
+    { "vendor": "asus",     "model": "TUF GAMING Z890-PLUS WIFI" },
+    { "vendor": "msi",      "model": "MAG B650 TOMAHAWK WIFI" },
+    { "vendor": "gigabyte", "model": "B650 GAMING X AX V2", "slug": "B650-GAMING-X-AX-V2-rev-10-11-12" }
+  ]
+}

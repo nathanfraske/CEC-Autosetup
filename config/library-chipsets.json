@@ -1,0 +1,11 @@
+{
+  "_comment": "Chipset tokens the driver-library builder pulls: current + last generation. Build-DriverLibrary.ps1 derives its board list from config/mapping.json (populate it first with Build-AsusMapping/Build-GigabyteMapping), keeping models whose name contains one of these tokens. Edit as generations roll over. Matching is whole-token + case-insensitive, so list the E variants explicitly.",
+  "amd": {
+    "current":  ["X870E", "X870", "B850", "B840"],
+    "lastGen":  ["X670E", "X670", "B650E", "B650", "A620"]
+  },
+  "intel": {
+    "current":  ["Z890", "B860", "H810"],
+    "lastGen":  ["Z790", "B760", "H770", "H610"]
+  }
+}

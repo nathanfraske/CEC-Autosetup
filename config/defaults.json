@@ -54,6 +54,14 @@
       "Tools"
     ]
   },
+  "mirror": {
+    "enabled": false,
+    "baseUrl": ""
+  },
+  "library": {
+    "outputDir": "library",
+    "boardsPath": "config/library-boards.json"
+  },
   "apps": {
     "enabled": true,
     "catalogPath": "config/apps.json"

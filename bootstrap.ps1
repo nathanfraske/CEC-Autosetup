@@ -19,6 +19,7 @@ param(
     [switch]   $SkipTweaks,
     [string]   $Tier,
     [string[]] $InstallApps,
+    [string]   $Mirror,
     [string]   $Model,
     [string]   $Vendor,
     [string]   $Repo,                # owner/name override (default below)
