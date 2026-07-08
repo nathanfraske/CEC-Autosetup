@@ -1,0 +1,329 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Nathan M. Fraske, Critical Error Computing L.L.C.
+#
+# FirstBoot.ps1 - the orchestrator. Detect the board, pick the provider, resolve
+# the model, fetch + install drivers headlessly when possible, fall back to Chrome
+# for holdout vendors, then run the apps layer for detected peripherals.
+#
+# Flags:
+#   -WhatIf            dry run; plans everything, installs nothing
+#   -IncludeBios       list BIOS entries (never flashes - listing only)
+#   -Categories <[]>   explicit category allow-list (default: skip utilities)
+#   -Osid <int>        ASUS osid override (default: probe candidates)
+#   -SkipApps          skip the peripheral-software (apps) phase
+#   -Model / -Vendor   override hardware detection (testing / odd boards)
+
+[CmdletBinding(SupportsShouldProcess)]
+param(
+    [switch]   $IncludeBios,
+    [string[]] $Categories,
+    [int]      $Osid = 0,
+    [switch]   $SkipApps,
+    [switch]   $SkipGpu,
+    [switch]   $SkipTweaks,
+    [string]   $Tier,
+    [string[]] $InstallApps,
+    [string]   $Mirror,
+    [string]   $Model,
+    [string]   $Vendor
+)
+
+$ErrorActionPreference = 'Stop'
+$here = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+Import-Module (Join-Path $here 'Common.psm1') -Force
+Import-Module (Join-Path $here 'Detect-Hardware.psm1') -Force
+Import-Module (Join-Path $here 'Detect-Peripherals.psm1') -Force
+Import-Module (Join-Path $here 'Detect-Gpu.psm1') -Force
+Import-Module (Join-Path $here 'Install-Gpu.psm1') -Force
+Import-Module (Join-Path $here 'Mapping.psm1') -Force
+Import-Module (Join-Path $here 'DriverLibrary.psm1') -Force
+Import-Module (Join-Path $here 'Install-Engine.psm1') -Force
+Import-Module (Join-Path $here 'Install-Chrome.psm1') -Force
+Import-Module (Join-Path $here 'Tweaks.psm1') -Force
+Import-Module (Join-Path $here 'providers/Provider.psm1') -Force
+Import-Module (Join-Path $here 'apps/AppCatalog.psm1') -Force
+
+function Resolve-MsiBoardCode {
+    # MSI boards may report an MS-xxxx code instead of the model name; map it via
+    # config/msi-codes.json (verified data only). Returns the name, or $null.
+    param([string] $Model)
+    if ($Model -notmatch '^(?i)MS-[0-9A-Za-z]+$') { return $null }
+    try {
+        $p = Join-Path (Get-FirstBootRoot) 'config/msi-codes.json'
+        if (-not (Test-Path -LiteralPath $p)) { return $null }
+        $codes = (Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json).codes
+        $hit = $codes.PSObject.Properties[$Model.ToUpperInvariant()]
+        if ($hit) { return [string]$hit.Value }
+    } catch { }
+    return $null
+}
+
+function Select-Drivers {
+    param($Drivers, [string[]] $AllowCategories, [string[]] $DenyDefault, [switch] $IncludeBiosEntries)
+    $out = New-Object System.Collections.Generic.List[object]
+    foreach ($d in $Drivers) {
+        $cat = [string]$d.Category
+        $isBios = $cat -match '(?i)bios|firmware'
+        if ($isBios -and -not $IncludeBiosEntries) { continue }
+        if ($isBios) { $out.Add($d) | Out-Null; continue }  # listed; install loop will not flash
+
+        if ($AllowCategories -and $AllowCategories.Count -gt 0) {
+            $matched = $false
+            foreach ($c in $AllowCategories) { if ($cat -match [regex]::Escape($c)) { $matched = $true; break } }
+            if (-not $matched) { continue }
+        }
+        else {
+            $denied = $false
+            foreach ($dn in $DenyDefault) { if ($cat -match [regex]::Escape($dn)) { $denied = $true; break } }
+            if ($denied) { continue }
+        }
+        $out.Add($d) | Out-Null
+    }
+    return $out.ToArray()
+}
+
+# --- start ----------------------------------------------------------------
+$logPath = Initialize-Log
+$settings = Get-Settings
+$dryRun = [bool]$WhatIfPreference
+
+Write-Log "==================== $((Get-AppName)) first-boot run ====================" -Level Info
+Write-Log "Log file: $logPath" -Level Info
+if ($dryRun) { Write-Log "Mode: DRY RUN (-WhatIf) - nothing will be installed." -Level Warn }
+
+# --- admin ---------------------------------------------------------------
+if (Test-Admin) {
+    Write-Log "Running elevated." -Level Info
+} elseif ($dryRun) {
+    Write-Log "Not elevated; continuing because this is a dry run." -Level Warn
+} else {
+    Assert-Admin
+}
+
+# --- detect board --------------------------------------------------------
+if ($Model -and $Vendor) {
+    $board = [pscustomobject]@{ Vendor = $Vendor.ToLowerInvariant(); Model = $Model; Manufacturer = '(override)'; Version = '' }
+    Write-Log "Board (override): vendor=$($board.Vendor), model='$($board.Model)'" -Level Info
+} else {
+    $board = Get-MotherboardInfo
+    Write-Log "Board: manufacturer='$($board.Manufacturer)', model='$($board.Model)', vendor=$($board.Vendor)" -Level Info
+}
+
+# --- naming reconciliation (mapping table + MS-xxxx codes) ----------------
+$resolveModel = $board.Model
+$resolveSlug  = $null
+$mapEntry = $null
+try {
+    $mapEntry = Find-MappingEntry -Mapping (Get-Mapping) -Model $board.Model
+} catch { Write-Log "Mapping lookup error: $($_.Exception.Message)" -Level Warn }
+
+if ($mapEntry) {
+    Write-Log "Mapping hit: '$($board.Model)' -> $($mapEntry.vendor)/$($mapEntry.model)" -Level Info
+    if (-not $board.Vendor) { $board.Vendor = [string]$mapEntry.vendor }
+    if ($mapEntry.model) { $resolveModel = [string]$mapEntry.model }
+    if ($mapEntry.slug)  { $resolveSlug  = [string]$mapEntry.slug }
+}
+if ($board.Vendor -eq 'msi') {
+    $msiName = Resolve-MsiBoardCode -Model $board.Model
+    if ($msiName) {
+        Write-Log "MSI board code '$($board.Model)' -> '$msiName'" -Level Info
+        $resolveModel = $msiName
+    }
+}
+
+$driverResults = New-Object System.Collections.Generic.List[object]
+$fallbackOpened = $false
+$drivers = $null
+$driverSource = 'vendor'
+$provider = $null
+$identity = $null
+
+# Mirror base: -Mirror overrides config/defaults.json mirror.baseUrl.
+$mirrorBase = if ($Mirror) { $Mirror }
+              elseif ($settings.mirror.enabled -and $settings.mirror.baseUrl) { [string]$settings.mirror.baseUrl }
+              else { $null }
+
+# 1) Local driver mirror first (LAN; works offline-from-internet).
+$index = $null
+if ($mirrorBase) {
+    Write-Log "Checking local driver mirror: $mirrorBase" -Level Info
+    try {
+        $index = Get-LibraryIndex -MirrorBase $mirrorBase
+        $libEntries = if ($index) { Find-LibraryEntries -Index $index -Model $board.Model } else { @() }
+        if (@($libEntries).Count -gt 0) {
+            $drivers = @($libEntries | ForEach-Object { ConvertTo-MirrorDriverEntry -LibEntry $_ -MirrorBase $mirrorBase })
+            $driverSource = "mirror ($mirrorBase)"
+            Write-Log "Driver source: local mirror - $(@($drivers).Count) entr(ies) for '$($board.Model)'." -Level Success
+        } else {
+            Write-Log "Mirror has no entry for '$($board.Model)'; using vendor." -Level Info
+        }
+    } catch { Write-Log "Mirror lookup failed: $($_.Exception.Message); using vendor." -Level Warn }
+}
+
+# 2) Vendor path (only when the mirror did not supply the drivers).
+if (-not $drivers) {
+    if (-not $board.Vendor) {
+        Write-Log "Unrecognised motherboard manufacturer; no driver provider." -Level Warn
+    } else {
+        $provider = Get-Provider -Vendor $board.Vendor
+        if (-not $provider) {
+            Write-Log "No provider registered for vendor '$($board.Vendor)'." -Level Warn
+        } else {
+            Write-Log "Provider: $($provider.Name) (headless=$($provider.SupportsHeadless)); resolving '$resolveModel'$(if($resolveSlug){" (slug $resolveSlug)"})" -Level Info
+            try { $identity = & $provider.ResolveProduct $resolveModel $resolveSlug } catch { Write-Log "Resolve failed: $($_.Exception.Message)" -Level Warn }
+            if ($provider.SupportsHeadless -and $identity) {
+                try { $drivers = & $provider.GetDriverList $identity $Osid }
+                catch { Write-Log "Headless driver list failed: $($_.Exception.Message)" -Level Warn }
+            }
+            if ($drivers -and -not $mapEntry) {
+                # Self-heal the mapping cache after a successful headless resolve.
+                try {
+                    $fb = & $provider.GetFallbackUrl $identity $resolveModel
+                    Save-MappingEntry -Model $board.Model -Entry ([pscustomobject]@{
+                        vendor = $provider.Name; model = $resolveModel
+                        method = "$($provider.Name)-api"; slug = $resolveSlug
+                        downloadPage = $fb; lastVerified = (Get-Date -Format 'yyyy-MM-dd')
+                    })
+                } catch { Write-Log "Mapping self-heal skipped: $($_.Exception.Message)" -Level Debug }
+            }
+        }
+    }
+}
+
+# 3) Install whatever the source produced (mirror or vendor share this path).
+if ($drivers) {
+    $kept = Select-Drivers -Drivers $drivers -AllowCategories $Categories `
+        -DenyDefault $settings.categories.denyDefault -IncludeBiosEntries:$IncludeBios
+    Write-Log "Selected $(@($kept).Count) of $(@($drivers).Count) driver file(s) from $driverSource." -Level Info
+
+    $idx = 0
+    $tot = @($kept).Count
+    foreach ($entry in $kept) {
+        $idx++
+        Write-Progress -Id 0 -Activity "$(Get-AppName): installing drivers" `
+            -Status "[$idx/$tot] $($entry.Category) - $($entry.Name)" `
+            -PercentComplete ([int](($idx / [Math]::Max(1, $tot)) * 100))
+        if ([string]$entry.Category -match '(?i)bios|firmware') {
+            Write-Log "BIOS listed (NOT flashed): $($entry.Name) $($entry.Version)" -Level Warn
+            $driverResults.Add([pscustomobject]@{ Name = $entry.Name; Category = $entry.Category; Version = $entry.Version; Method = 'bios'; Status = 'ListedOnly'; Detail = $entry.Url }) | Out-Null
+            continue
+        }
+        $r = Install-DriverPackage -Entry $entry
+        $driverResults.Add($r) | Out-Null
+    }
+    Write-Progress -Id 0 -Activity "$(Get-AppName): installing drivers" -Completed
+}
+
+# 4) Chrome fallback when neither mirror nor vendor produced drivers.
+if (-not $drivers) {
+    $fallbackUrl = $null
+    if ($mapEntry -and $mapEntry.downloadPage) { $fallbackUrl = [string]$mapEntry.downloadPage }
+    elseif ($provider) { $fallbackUrl = & $provider.GetFallbackUrl $identity $resolveModel }
+    if ($fallbackUrl) {
+        Write-Log "Falling back to browser: $fallbackUrl" -Level Warn
+        Open-Url -Url $fallbackUrl
+        $fallbackOpened = $true
+        Write-Log "OPERATOR CHECKLIST - download + install from the page above:" -Level Info
+        foreach ($c in 'Chipset', 'LAN / Ethernet', 'Wi-Fi / Wireless', 'Bluetooth', 'Audio', 'Graphics (VGA)', 'Storage (SATA/RAID)') {
+            Write-Log "    [ ] $c driver" -Level Info
+        }
+    }
+}
+
+# --- GPU detection (shared by the GPU-driver and apps phases) ------------
+$gpus = @()
+$gpuVendors = @()
+try {
+    $gpus = @(Get-Gpus)
+    $gpuVendors = @($gpus | Where-Object { $_.Vendor } | Select-Object -ExpandProperty Vendor -Unique)
+    if ($gpus.Count -gt 0) {
+        Write-Log ("GPU(s): {0}" -f (($gpus | ForEach-Object { "$($_.Name) [$(if($_.Vendor){$_.Vendor}else{'?'})]" }) -join '; ')) -Level Info
+    }
+} catch { Write-Log "GPU detection error: $($_.Exception.Message)" -Level Warn }
+
+# --- GPU driver phase (NVIDIA fully unattended; AMD/Intel via their app) --
+# Every detected GPU vendor is handled - no fragile iGPU-vs-dGPU guessing. NVIDIA
+# gets the silent headless driver here AND the NVIDIA App in the apps phase;
+# AMD/Intel drivers ship with their vendor app (installed in the apps phase).
+$gpuResults = New-Object System.Collections.Generic.List[object]
+if ($SkipGpu) {
+    Write-Log "GPU driver phase skipped (-SkipGpu)." -Level Info
+} else {
+    # NVIDIA: fully headless (resolves its own installer + silent install).
+    foreach ($g in ($gpus | Where-Object { $_.Vendor -eq 'nvidia' })) {
+        $gpuResults.Add((Install-NvidiaDriver -GpuName $g.Name -OsId ([int]$settings.nvidia.osId))) | Out-Null
+    }
+    # AMD / Intel: unattended IF an installer is provided (pinned config url, or
+    # staged in the driver library). No clean headless discovery API, so otherwise
+    # the vendor app (apps phase) carries the driver.
+    foreach ($v in @($gpuVendors | Where-Object { $_ -in 'amd', 'intel' })) {
+        $url = $null
+        $pin = $null
+        try { $pin = [string]$settings.$v.url } catch { }
+        if ($pin) { $url = $pin }
+        elseif ($mirrorBase) { try { $url = Get-LibraryGpuInstaller -Index $index -Vendor $v -MirrorBase $mirrorBase } catch { } }
+
+        if ($url) {
+            Write-Log "$v GPU driver: unattended install from $url" -Level Info
+            $gpuResults.Add((Install-GpuVendorDriver -Vendor $v -InstallerUrl $url)) | Out-Null
+        } else {
+            Write-Log "$v GPU driver: no pinned/mirrored installer; the vendor app (apps phase) will carry it. To make it unattended, pin '$v.url' in defaults.json or stage it in the driver library." -Level Info
+        }
+    }
+}
+
+# --- apps phase ----------------------------------------------------------
+$appResults = New-Object System.Collections.Generic.List[object]
+$appsEnabled = $true
+try { $appsEnabled = [bool]$settings.apps.enabled } catch { }
+if ($SkipApps -or -not $appsEnabled) {
+    Write-Log "Apps phase skipped." -Level Info
+} else {
+    Write-Log "Apps phase: matching GPU vendors + peripherals to the catalog..." -Level Info
+    try {
+        $devices = Get-Peripherals
+        $appMatches = Find-MatchingApps -Devices $devices -GpuVendors $gpuVendors -Include $InstallApps
+        if (@($appMatches).Count -eq 0) {
+            Write-Log "No catalog apps matched the detected hardware." -Level Info
+        }
+        $aidx = 0
+        $atot = @($appMatches).Count
+        foreach ($m in $appMatches) {
+            $aidx++
+            Write-Progress -Id 0 -Activity "$(Get-AppName): installing apps" `
+                -Status "[$aidx/$atot] $($m.Name)" -PercentComplete ([int](($aidx / [Math]::Max(1, $atot)) * 100))
+            Write-Log "App match: $($m.Name) ($($m.Reason))" -Level Info
+            $r = Install-App -App $m.App
+            $appResults.Add($r) | Out-Null
+        }
+        Write-Progress -Id 0 -Activity "$(Get-AppName): installing apps" -Completed
+    } catch {
+        Write-Log "Apps phase error: $($_.Exception.Message)" -Level Warn
+    }
+}
+
+# --- tweaks / provisioning phase -----------------------------------------
+if ($SkipTweaks) {
+    Write-Log "Tweaks phase skipped (-SkipTweaks)." -Level Info
+} else {
+    Write-Log "Tweaks phase: applying provisioning (default browser, taskbar, OneDrive/Copilot, wallpaper)..." -Level Info
+    try { Invoke-Tweaks -Tier $Tier } catch { Write-Log "Tweaks phase error: $($_.Exception.Message)" -Level Warn }
+}
+
+# --- summary -------------------------------------------------------------
+Write-Log "-------------------- summary --------------------" -Level Info
+Write-Log "Board: $($board.Manufacturer) / $($board.Model) ($($board.Vendor))" -Level Info
+foreach ($r in $driverResults) {
+    Write-Log ("  driver [{0,-11}] {1} {2} ({3})" -f $r.Status, $r.Category, $r.Name, $r.Method) -Level Info
+}
+foreach ($r in $gpuResults) {
+    Write-Log ("  gpu    [{0,-11}] {1} {2} ({3})" -f $r.Status, $r.Gpu, $r.Version, $r.Method) -Level Info
+}
+foreach ($r in $appResults) {
+    Write-Log ("  app    [{0,-11}] {1} ({2})" -f $r.Status, $r.Name, $r.Method) -Level Info
+}
+if ($fallbackOpened) { Write-Log "A vendor page was opened for manual completion." -Level Warn }
+Write-Log "Done. Full transcript: $logPath" -Level Success
+
+exit 0

@@ -1,0 +1,24 @@
+# --- Downloaded / runtime artifacts -------------------------------------
+work/
+library/                 # built driver-library mirror (huge; built on the host)
+gpu-installers/*/         # staged vendor GPU installers (supplied per bench)
+*.zip
+*.msi
+*.exe
+!tests/fixtures/**
+# --- Logs ----------------------------------------------------------------
+*.log
+logs/
+# --- PowerShell / module noise ------------------------------------------
+*.tmp
+*.bak
+TestResults*.xml
+coverage*.xml
+# --- OS noise ------------------------------------------------------------
+Thumbs.db
+desktop.ini
+.DS_Store
+# --- Editor --------------------------------------------------------------
+.vs/
+.vscode/
+*.user

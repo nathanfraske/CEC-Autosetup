@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+# Weekly refresh of the CEC-Autosetep driver library. See docs/driver-library.md.
+#   sudo cp tools/systemd/cec-driver-library-build.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now cec-driver-library-build.timer
+
+[Unit]
+Description=Weekly CEC-Autosetep driver library refresh
+
+[Timer]
+OnCalendar=Sun *-*-* 03:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

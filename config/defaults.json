@@ -1,0 +1,79 @@
+{
+  "appName": "firstboot",
+  "http": {
+    "timeoutSec": 60,
+    "retries": 4,
+    "backoffBaseMs": 1000,
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+  },
+  "asus": {
+    "systemCode": "asus",
+    "websiteCode": "global",
+    "pdInfoBase": "https://odinapi.asus.com/recent-data/apiv2/PDInfo",
+    "driversBase": "https://www.asus.com/support/webapi/ProductV2/GetPDDrivers",
+    "cdnBase": "https://dlcdnets.asus.com",
+    "fallbackBase": "https://www.asus.com/supportonly",
+    "osidCandidates": [52, 50, 49, 48, 45, 44, 39, 38, 33, 18, 16, 7]
+  },
+  "msi": {
+    "apiBase": "https://www.msi.com/api/v1/product/support",
+    "supportBase": "https://www.msi.com/Motherboard",
+    "cdnBase": "https://download.msi.com",
+    "preferredOs": ["Win11 64", "Win10 64"]
+  },
+  "gigabyte": {
+    "supportBase": "https://www.gigabyte.com/Motherboard",
+    "cdnBase": "https://download.gigabyte.com",
+    "challengeMinBytes": 51200,
+    "modelListUrl": "https://www.gigabyte.com/iisApplicationNuxt/api/proxy/api/v1.0/Consumer/global/GetConsumerListPageModelList/Motherboard",
+    "modelListPerPage": 16
+  },
+  "asrock": {
+    "supportBase": "https://www.asrock.com/mb",
+    "cdnBase": "https://download.asrock.com"
+  },
+  "chrome": {
+    "msiUrl": "https://dl.google.com/tag/s/dl/chrome/install/googlechromestandaloneenterprise64.msi",
+    "wingetId": "Google.Chrome"
+  },
+  "nvidia": {
+    "lookupUrl": "https://www.nvidia.com/Download/API/lookupValueSearch.aspx?TypeID=3",
+    "driverLookupBase": "https://gfwsl.geforce.com/services_toolkit/services/com/nvidia/services/AjaxDriverService.php",
+    "osId": 57,
+    "silentArgs": "-s -noreboot"
+  },
+  "amd": {
+    "silentArgs": "-INSTALL",
+    "url": null,
+    "_note": "AMD has no headless driver-lookup API (bot-walled). For unattended install, pin the latest Adrenalin installer URL here OR stage it in the driver library (gpu-installers/amd/). Silent switch per AMD's Radeon Software Command Line guide."
+  },
+  "intel": {
+    "silentArgs": "-s",
+    "url": null,
+    "_note": "Intel has no clean headless driver-lookup API (bot-walled). Pin the latest Intel graphics installer URL here OR stage it in the driver library (gpu-installers/intel/). Silent switch: Installer.exe -s (add --overwrite to force)."
+  },
+  "categories": {
+    "denyDefault": [
+      "Software and Utility",
+      "Utilities",
+      "Armoury Crate",
+      "Manual",
+      "BIOS",
+      "Firmware",
+      "Patch",
+      "Tools"
+    ]
+  },
+  "mirror": {
+    "enabled": false,
+    "baseUrl": ""
+  },
+  "library": {
+    "outputDir": "library",
+    "boardsPath": "config/library-boards.json"
+  },
+  "apps": {
+    "enabled": true,
+    "catalogPath": "config/apps.json"
+  }
+}

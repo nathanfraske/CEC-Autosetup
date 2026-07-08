@@ -1,0 +1,12 @@
+{
+  "data": {
+    "currentPage": 1,
+    "perPage": 16,
+    "totalRow": 1073,
+    "modelList": [
+      { "productName": "A520M H ARGB", "productUrl": "/Motherboard/A520M-H-ARGB-rev-11", "productVersion": "1.1" },
+      { "productName": "X870 AORUS STEALTH ICE", "productUrl": "/Motherboard/X870-AORUS-STEALTH-ICE-rev-11", "productVersion": "1.1" },
+      { "productName": "B650 GAMING X AX V2", "productUrl": "/Motherboard/B650-GAMING-X-AX-V2-rev-10-11-12", "productVersion": "1.x" }
+    ]
+  }
+}

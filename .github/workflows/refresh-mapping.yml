@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Nathan M. Fraske, Critical Error Computing L.L.C.
+#
+# Network-gated refresh + canary. Separate from ci.yml (which is offline) so a
+# vendor being down or bot-walled never reds the offline build. Runs weekly and
+# on demand. Regenerates the ASUS catalog into a downloadable artifact (the
+# committed seed stays lean) and alerts when a vendor's live call breaks.
+#
+# Note: scheduled runs execute on the default branch. MSI/Gigabyte sit behind
+# Akamai and may challenge GitHub runner IPs - a canary FAIL there can be an IP
+# block rather than a contract change; re-run from a normal network to confirm.
+
+name: Refresh mapping (network-gated)
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'   # Mondays 06:17 UTC
+  workflow_dispatch:
+
+jobs:
+  canary:
+    name: Live vendor canary
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run canary
+        shell: pwsh
+        run: ./tools/Test-VendorCanary.ps1
+
+  refresh-catalog:
+    name: Regenerate ASUS + Gigabyte catalog rows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build full mapping (ASUS + Gigabyte rows + existing seed)
+        shell: pwsh
+        run: |
+          Copy-Item config/mapping.json mapping.full.json -Force
+          ./tools/Build-AsusMapping.ps1 -MappingPath (Resolve-Path mapping.full.json)
+          # Gigabyte: Akamai may block GitHub runner IPs; don't fail the job if so.
+          try { ./tools/Build-GigabyteMapping.ps1 -MappingPath (Resolve-Path mapping.full.json) }
+          catch { Write-Host "Gigabyte refresh skipped: $($_.Exception.Message)" }
+      - name: Upload full mapping artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mapping-full
+          path: mapping.full.json
+          if-no-files-found: error

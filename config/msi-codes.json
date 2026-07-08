@@ -1,0 +1,6 @@
+{
+  "_comment": "SMBIOS board-code -> marketing name for MSI boards that report an MS-xxxx code in Win32_BaseBoard.Product instead of the model name. The code is the BIOS-filename prefix on the model's MSI support BIOS panel (e.g. files '7D75v1x' => board code MS-7D75). Populate from VERIFIED data only. Until a code is listed here, an MS-xxxx board falls back to the MSI support site. See docs/vendor-contracts.md open items.",
+  "codes": {
+    "MS-7D75": "MAG B650 TOMAHAWK WIFI"
+  }
+}

@@ -1,0 +1,91 @@
+{
+  "_comment": "Hardware-triggered software catalog. Each app installs only when matching hardware is detected: a GPU vendor (match.gpuVendor: nvidia|amd|intel), a USB VID:PID (match.vidpid), or a device-name pattern (match.namePatterns). Primary install path is winget (resolves the real vendor installer); when no winget package exists the app falls back to opening the official download page in Chrome, exactly like the ASRock driver path. Add apps here without touching code. See docs/architecture.md (Apps layer) and docs/vendor-contracts.md (Open items).",
+  "apps": [
+    {
+      "name": "SignalRGB",
+      "wingetId": "WhirlwindFX.SignalRgb",
+      "fallbackUrl": "https://signalrgb.com/",
+      "match": {
+        "vidpid": [],
+        "namePatterns": [
+          "RGB",
+          "Aura",
+          "Mystic Light",
+          "RGB Fusion",
+          "Polychrome",
+          "Razer",
+          "Corsair",
+          "SteelSeries",
+          "Logitech G",
+          "HyperX",
+          "NZXT",
+          "Govee"
+        ]
+      },
+      "notes": "Cross-brand RGB controller. winget id verified 2026-06-19 (WhirlwindFX.SignalRgb). Name patterns are intentionally broad; tighten per shop experience."
+    },
+    {
+      "name": "Thermalright Control Center",
+      "wingetId": null,
+      "fallbackUrl": "https://www.thermalright.com/support/download/",
+      "match": {
+        "vidpid": [
+          "87CD:70DB",
+          "87AD:70DB",
+          "0416:5406",
+          "0402:3922",
+          "0416:5408",
+          "0416:5409",
+          "0416:5302",
+          "0418:5303",
+          "0418:5304",
+          "0416:8001"
+        ],
+        "namePatterns": [
+          "Thermalright",
+          "TRCC",
+          "TR-CC"
+        ]
+      },
+      "notes": "No winget package as of 2026-06-19; opens the official download page in Chrome. VID:PID list is community-sourced from the thermalright-trcc-linux project (HID LCD/LED, SCSI, bulk controllers) and should be confirmed against official hardware. See docs/vendor-contracts.md Open items."
+    },
+    {
+      "name": "NVIDIA App",
+      "wingetId": "NVIDIA.app",
+      "fallbackUrl": "https://www.nvidia.com/en-us/software/nvidia-app/",
+      "match": { "gpuVendor": ["nvidia"] },
+      "notes": "winget id NVIDIA.app verified 2026-06-19. Installs the NVIDIA App silently; the app then downloads the latest Game Ready / Studio driver (does NOT fully auto-install the driver unattended - a future headless driver path could add that; see docs/vendor-contracts.md GPU)."
+    },
+    {
+      "name": "AMD Software: Adrenalin Edition",
+      "wingetId": null,
+      "fallbackUrl": "https://www.amd.com/en/support/download/drivers.html",
+      "match": { "gpuVendor": ["amd"] },
+      "notes": "Not on winget as of 2026-06-19; opens the AMD drivers page in Chrome. The Adrenalin installer IS the driver package - running it installs the GPU driver."
+    },
+    {
+      "name": "Intel Arc / Graphics Software",
+      "wingetId": null,
+      "fallbackUrl": "https://www.intel.com/content/www/us/en/download/785597/intel-arc-graphics-windows.html",
+      "match": { "gpuVendor": ["intel"] },
+      "notes": "No standalone winget package (Arc Control ships with the graphics driver); opens the Intel Arc/Graphics Windows download page in Chrome. Triggers on Intel iGPU/Arc."
+    },
+    {
+      "name": "Steam",
+      "wingetId": "Valve.Steam",
+      "fallbackUrl": "https://store.steampowered.com/about/",
+      "match": { "always": true },
+      "notes": "Baseline app installed on every build (match.always). winget id Valve.Steam."
+    },
+    {
+      "name": "Hyte Nexus",
+      "wingetId": null,
+      "fallbackUrl": "https://hyte.com/nexus",
+      "match": {
+        "vidpid": [],
+        "namePatterns": ["HYTE"]
+      },
+      "notes": "No winget package as of 2026-06-19; opens hyte.com/nexus in Chrome. Detection is best-effort by name (the Y70 Touch screen is a USB device but its VID:PID is not documented - capture it on real hardware via tools/Get-DeviceIds.ps1 and add to match.vidpid; see docs/browser-agent-tasks.md). Reliable trigger: -InstallApps 'Hyte Nexus'."
+    }
+  ]
+}
