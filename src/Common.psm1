@@ -138,9 +138,29 @@ function Set-LogPhase {
     if ($script:LogPhase -and $script:LogPhase -ne $Phase -and $script:LogPhaseStarted) {
         $secs = [Math]::Round(((Get-Date) - $script:LogPhaseStarted).TotalSeconds, 1)
         Write-Log ("phase '{0}' finished in {1}s" -f $script:LogPhase, $secs) -Level Trace -Phase $script:LogPhase -Data @{ phaseSeconds = $secs }
+        Write-StepDone -Label ("stage: {0}" -f $script:LogPhase) -Seconds $secs
     }
     $script:LogPhase = $Phase
     $script:LogPhaseStarted = Get-Date
+}
+
+function Write-StepDone {
+    <#
+        .SYNOPSIS
+        Prints a faded "done" ledger line for a finished step - greyed
+        checkbox, label, and how long it took - so completed work stays
+        visible under the live progress bars as the run scrolls.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string] $Label,
+        [double] $Seconds = -1,
+        [ValidateSet('ok', 'skip', 'fail')][string] $Kind = 'ok'
+    )
+    $mark = switch ($Kind) { 'ok' { [char]0x2713 } 'skip' { '-' } 'fail' { 'x' } }
+    $color = switch ($Kind) { 'ok' { 'DarkGray' } 'skip' { 'DarkYellow' } 'fail' { 'Red' } }
+    $timeTxt = if ($Seconds -ge 0) { ' ({0}s)' -f [Math]::Round($Seconds, 1) } else { '' }
+    Write-Host ("  [{0}] {1}{2}" -f $mark, $Label, $timeTxt) -ForegroundColor $color
 }
 
 function Write-Log {
@@ -654,7 +674,7 @@ function Assert-Admin {
 Export-ModuleMember -Function `
     Get-FirstBootRoot, Get-Settings, Get-AppName, `
     Get-ProgramDataRoot, Get-LogDirectory, Get-WorkDirectory, `
-    Initialize-Log, Get-LogFile, Get-JsonLogFile, Set-LogPhase, Write-Log, `
+    Initialize-Log, Get-LogFile, Get-JsonLogFile, Set-LogPhase, Write-Log, Write-StepDone, `
     Set-Tls12, Get-DefaultHttpHeaders, Invoke-Http, `
     Get-FileHashValue, Test-FileHash, `
     Get-FirstBootStatePath, Get-FirstBootState, Set-FirstBootStateValue, `

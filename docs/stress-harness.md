@@ -80,6 +80,18 @@ custom thrasher, because the point is *load choreography*, not just wattage:
 - **Markers built in:** the binary itself emits the QPC-timestamped
   load-transition markers (every step edge) into the harness JSONL, so burst
   edges align with the external 1kHz power capture with no inference.
+- **Wattage test mode (closed-loop power targeting):** the thrasher reads GPU
+  board power at 1–10 Hz (NVML on NVIDIA, ADLX on AMD, LHM fallback) and
+  servos the load mix — dispatch occupancy, FMA:memory-traffic ratio, duty
+  cycle — to hold a commanded power profile: hold-at-N-watts, staircase
+  steps, ramps, sine sweeps. That is OCCT's power test, but scriptable and
+  marker-correlated. **Self-optimizing:** a calibration pass per GPU model
+  auto-searches the load-mix space for the max-sustained-power operating
+  point and stores the per-model profile (device-ID'd, shipped back over the
+  reports channel) so subsequent QC runs start already tuned. Note the
+  control-loop reality: software power servo reacts at ~100ms-1s scale —
+  fast enough to HOLD wattage targets; the ms-scale transient attacks come
+  from the open-loop burst scenarios above, with the 1kHz rig as the judge.
 - Compute results checksummed (error detection, not just crash detection);
   TDR handling; per-vendor telemetry hooks.
 

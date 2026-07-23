@@ -129,6 +129,16 @@ function Enter-Stage {
     }
 }
 
+function Get-DoneKind {
+    # Maps a step result Status to the done-ledger mark kind.
+    param([string] $Status)
+    switch -Regex ($Status) {
+        '^(Failed|Blocked|HashFailed|Fail)$'                        { return 'fail' }
+        '^(SkippedByRule|Skipped|WhatIf|NotResolved|NeedsManual)$'  { return 'skip' }
+        default                                                     { return 'ok' }
+    }
+}
+
 Write-Log "==================== $((Get-AppName)) first-boot run ====================" -Level Info
 Write-Log "Log file: $logPath" -Level Info
 Write-Log "JSONL log: $(Get-JsonLogFile)" -Level Info
@@ -423,6 +433,8 @@ if ($drivers) {
                 name = [string]$entry.Name; status = [string]$r.Status
                 method = [string]$r.Method; seconds = [Math]::Round($sw.Elapsed.TotalSeconds, 1)
             }
+            Write-StepDone -Label ("[{0}] {1} -> {2}" -f $group.Key, $entry.Name, $r.Status) `
+                -Seconds $sw.Elapsed.TotalSeconds -Kind (Get-DoneKind $r.Status)
             if ($r.Status -eq 'Installed') { $installedInGroup = $true }
         }
 
@@ -494,7 +506,12 @@ if ($SkipGpu) {
 } else {
     # NVIDIA: fully headless (resolves its own installer + silent install).
     foreach ($g in ($gpus | Where-Object { $_.Vendor -eq 'nvidia' })) {
-        $gpuResults.Add((Install-NvidiaDriver -GpuName $g.Name -OsId ([int]$settings.nvidia.osId))) | Out-Null
+        $gsw = [System.Diagnostics.Stopwatch]::StartNew()
+        $gr = Install-NvidiaDriver -GpuName $g.Name -OsId ([int]$settings.nvidia.osId)
+        $gsw.Stop()
+        $gpuResults.Add($gr) | Out-Null
+        Write-StepDone -Label ("gpu: {0} -> {1}" -f $g.Name, $gr.Status) `
+            -Seconds $gsw.Elapsed.TotalSeconds -Kind (Get-DoneKind $gr.Status)
     }
     # AMD / Intel: unattended IF an installer is provided (pinned config url, or
     # staged in the driver library). No clean headless discovery API, so otherwise
@@ -508,7 +525,12 @@ if ($SkipGpu) {
 
         if ($url) {
             Write-Log "$v GPU driver: unattended install from $url" -Level Info
-            $gpuResults.Add((Install-GpuVendorDriver -Vendor $v -InstallerUrl $url)) | Out-Null
+            $gsw = [System.Diagnostics.Stopwatch]::StartNew()
+            $gr = Install-GpuVendorDriver -Vendor $v -InstallerUrl $url
+            $gsw.Stop()
+            $gpuResults.Add($gr) | Out-Null
+            Write-StepDone -Label ("gpu: {0} -> {1}" -f $v, $gr.Status) `
+                -Seconds $gsw.Elapsed.TotalSeconds -Kind (Get-DoneKind $gr.Status)
         } else {
             Write-Log "$v GPU driver: no pinned/mirrored installer; the vendor app (apps phase) will carry it. To make it unattended, pin '$v.url' in defaults.json or stage it in the driver library." -Level Info
         }
@@ -546,8 +568,12 @@ if ($SkipApps -or -not $appsEnabled) {
             Write-Progress -Id 0 -Activity "$(Get-AppName): installing apps" `
                 -Status "[$aidx/$atot] $($m.Name)" -PercentComplete ([int](($aidx / [Math]::Max(1, $atot)) * 100))
             Write-Log "App match: $($m.Name) ($($m.Reason))" -Level Info
+            $asw = [System.Diagnostics.Stopwatch]::StartNew()
             $r = Install-App -App $m.App
+            $asw.Stop()
             $appResults.Add($r) | Out-Null
+            Write-StepDone -Label ("app: {0} -> {1}" -f $m.Name, $r.Status) `
+                -Seconds $asw.Elapsed.TotalSeconds -Kind (Get-DoneKind $r.Status)
         }
         Write-Progress -Id 0 -Activity "$(Get-AppName): installing apps" -Completed
         Add-LedgerEntry -Phase 'apps' -Outcome $(if (@($appResults | Where-Object { $_.Status -eq 'Failed' }).Count -eq 0) { 'ok' } else { 'degraded' }) `
