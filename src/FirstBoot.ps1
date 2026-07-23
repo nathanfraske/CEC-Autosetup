@@ -112,6 +112,23 @@ function Add-LedgerEntry {
     $ledger.Add([pscustomobject]@{ Phase = $Phase; Outcome = $Outcome; Detail = $Detail }) | Out-Null
 }
 
+# Master progress: the operator always sees the current stage [n/total] and
+# elapsed wall clock, above the per-download/per-driver bars.
+$script:RunStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+$script:StageTotal = 11
+function Enter-Stage {
+    param(
+        [Parameter(Mandatory)][string] $Phase,
+        [int] $Index = 0
+    )
+    Set-LogPhase $Phase
+    if ($Index -gt 0) {
+        Write-Progress -Id 100 -Activity "$(Get-AppName) pipeline" `
+            -Status ("[{0}/{1}] {2}  (elapsed {3})" -f $Index, $script:StageTotal, $Phase, $script:RunStopwatch.Elapsed.ToString('hh\:mm\:ss')) `
+            -PercentComplete ([int](($Index / $script:StageTotal) * 100))
+    }
+}
+
 Write-Log "==================== $((Get-AppName)) first-boot run ====================" -Level Info
 Write-Log "Log file: $logPath" -Level Info
 Write-Log "JSONL log: $(Get-JsonLogFile)" -Level Info
@@ -147,7 +164,7 @@ if (Test-Admin) {
 # --- stage 1a: Windows prep (hold WU before it grabs anything; UAC off) ---
 # Shop order: hold WU -> BIOS -> reboot to UEFI -> (post-flash) restore WU and
 # let it run FULLY -> vendor drivers on top. The hold is temporary by design.
-Set-LogPhase 'windows-prep'
+Enter-Stage 'windows-prep' 1
 if ($SkipWindowsPrep) {
     Write-Log 'Windows prep skipped (-SkipWindowsPrep).' -Level Info
     Add-LedgerEntry -Phase 'windows-prep' -Outcome 'skipped' -Detail '-SkipWindowsPrep'
@@ -168,7 +185,7 @@ if ($SkipWindowsPrep) {
 }
 
 # --- detect board --------------------------------------------------------
-Set-LogPhase 'detect'
+Enter-Stage 'detect' 2
 if ($Model -and $Vendor) {
     $board = [pscustomobject]@{ Vendor = $Vendor.ToLowerInvariant(); Model = $Model; Manufacturer = '(override)'; Version = '' }
     Write-Log "Board (override): vendor=$($board.Vendor), model='$($board.Model)'" -Level Info
@@ -180,7 +197,7 @@ Add-LedgerEntry -Phase 'detect' -Outcome $(if ($board.Vendor) { 'ok' } else { 'b
     -Detail ("{0} / {1} -> {2}" -f $board.Manufacturer, $board.Model, $(if ($board.Vendor) { $board.Vendor } else { 'no provider' }))
 
 # --- naming reconciliation (mapping table + MS-xxxx codes) ----------------
-Set-LogPhase 'mapping'
+Enter-Stage 'mapping' 3
 $resolveModel = $board.Model
 $resolveSlug  = $null
 $mapEntry = $null
@@ -217,7 +234,7 @@ $mirrorBase = if ($Mirror) { $Mirror }
               else { $null }
 
 # 1) Local driver mirror first (LAN; works offline-from-internet).
-Set-LogPhase 'source'
+Enter-Stage 'source' 4
 $index = $null
 if (-not $mirrorBase) {
     Add-LedgerEntry -Phase 'mirror' -Outcome 'skipped' -Detail 'no mirror configured'
@@ -285,7 +302,7 @@ if (-not $drivers) {
 # Runs before any driver installs. Real runs end at the reboot; after the tech
 # flashes and boots back, the state marker skips this and the pipeline
 # continues below. Rehearsal emulates and carries on.
-Set-LogPhase 'bios'
+Enter-Stage 'bios' 5
 if ($SkipBiosUpdate) {
     Write-Log 'BIOS stage skipped (-SkipBiosUpdate).' -Level Info
     Add-LedgerEntry -Phase 'bios' -Outcome 'skipped' -Detail '-SkipBiosUpdate'
@@ -318,7 +335,7 @@ if ($SkipBiosUpdate) {
 # WU gets all of its updates + generic drivers out of the way first; the
 # vendor drivers below then replace its defaults. Real runs exit at WU-driven
 # reboots and resume via the resume task; rehearsal scans + reports without touching.
-Set-LogPhase 'windows-update'
+Enter-Stage 'windows-update' 6
 if ($SkipWindowsUpdateRun) {
     Write-Log 'Windows Update stage skipped (-SkipWindowsUpdateRun).' -Level Info
     Add-LedgerEntry -Phase 'windows-update' -Outcome 'skipped' -Detail '-SkipWindowsUpdateRun'
@@ -346,7 +363,7 @@ if ($SkipWindowsUpdateRun) {
 }
 
 # 3) Install whatever the source produced (mirror or vendor share this path).
-Set-LogPhase 'drivers'
+Enter-Stage 'drivers' 7
 if ($drivers) {
     $kept = Select-Drivers -Drivers $drivers -AllowCategories $Categories `
         -DenyDefault $settings.categories.denyDefault -IncludeBiosEntries:$IncludeBios
@@ -435,7 +452,7 @@ if ($drivers) {
 }
 
 # 4) Chrome fallback when neither mirror nor vendor produced drivers.
-Set-LogPhase 'fallback'
+Enter-Stage 'fallback' 7
 if (-not $drivers) {
     $fallbackUrl = $null
     if ($mapEntry -and $mapEntry.downloadPage) { $fallbackUrl = [string]$mapEntry.downloadPage }
@@ -455,7 +472,7 @@ if (-not $drivers) {
 }
 
 # --- GPU detection (shared by the GPU-driver and apps phases) ------------
-Set-LogPhase 'gpu'
+Enter-Stage 'gpu' 8
 $gpus = @()
 $gpuVendors = @()
 try {
@@ -507,7 +524,7 @@ if ($SkipGpu) {
 }
 
 # --- apps phase ----------------------------------------------------------
-Set-LogPhase 'apps'
+Enter-Stage 'apps' 9
 $appResults = New-Object System.Collections.Generic.List[object]
 $appsEnabled = $true
 try { $appsEnabled = [bool]$settings.apps.enabled } catch { }
@@ -542,7 +559,7 @@ if ($SkipApps -or -not $appsEnabled) {
 }
 
 # --- tweaks / provisioning phase -----------------------------------------
-Set-LogPhase 'tweaks'
+Enter-Stage 'tweaks' 10
 if ($SkipTweaks) {
     Write-Log "Tweaks phase skipped (-SkipTweaks)." -Level Info
     Add-LedgerEntry -Phase 'tweaks' -Outcome 'skipped' -Detail '-SkipTweaks'
@@ -558,7 +575,7 @@ if ($SkipTweaks) {
 }
 
 # --- stage 4: build verification (the pass/fail gate) ---------------------
-Set-LogPhase 'verify'
+Enter-Stage 'verify' 11
 if ($SkipVerify) {
     Write-Log 'Build verification skipped (-SkipVerify).' -Level Info
     Add-LedgerEntry -Phase 'verify' -Outcome 'skipped' -Detail '-SkipVerify'
@@ -573,8 +590,12 @@ if ($SkipVerify) {
 }
 
 # --- summary -------------------------------------------------------------
-Set-LogPhase 'summary'
+Enter-Stage 'summary'
+Write-Progress -Id 100 -Activity "$(Get-AppName) pipeline" -Completed
 Write-Log "-------------------- summary --------------------" -Level Info
+Write-Log ("Total elapsed this boot: {0}" -f $script:RunStopwatch.Elapsed.ToString('hh\:mm\:ss')) -Level Info -Data @{
+    totalSeconds = [Math]::Round($script:RunStopwatch.Elapsed.TotalSeconds, 1)
+}
 Write-Log "Board: $($board.Manufacturer) / $($board.Model) ($($board.Vendor))" -Level Info
 foreach ($r in $driverResults) {
     Write-Log ("  driver [{0,-11}] {1} {2} ({3})" -f $r.Status, $r.Category, $r.Name, $r.Method) -Level Info

@@ -105,14 +105,17 @@ function Install-ScannedUpdates {
     # the stage instead of killing the whole pipeline.
     try {
         Write-Log "Downloading $($toInstall.Count) Windows update(s)..." -Level Info
+        Write-Progress -Id 2 -Activity 'Windows Update' -Status "downloading $($toInstall.Count) update(s)... (WUA reports no mid-transfer percent)"
         $downloader = $session.CreateUpdateDownloader()
         $downloader.Updates = $toInstall
         $downloader.Download() | Out-Null
 
         Write-Log "Installing $($toInstall.Count) Windows update(s)..." -Level Info
+        Write-Progress -Id 2 -Activity 'Windows Update' -Status "installing $($toInstall.Count) update(s)..."
         $installer = $session.CreateUpdateInstaller()
         $installer.Updates = $toInstall
         $installResult = $installer.Install()
+        Write-Progress -Id 2 -Activity 'Windows Update' -Completed
 
         $result.ResultCode = [int]$installResult.ResultCode        # 2=Succeeded, 3=SucceededWithErrors
         $result.RebootRequired = [bool]$installResult.RebootRequired
@@ -126,6 +129,7 @@ function Install-ScannedUpdates {
         Write-Log ("Windows updates installed: {0} ok, {1} failed, reboot required: {2}" -f `
             $result.Installed, $result.Failed, $result.RebootRequired) -Level $(if ($result.Failed -eq 0) { 'Success' } else { 'Warn' })
     } catch {
+        Write-Progress -Id 2 -Activity 'Windows Update' -Completed
         $result.Failed = $toInstall.Count
         Write-Log "Windows Update install batch failed: $($_.Exception.Message)" -Level Error
     }

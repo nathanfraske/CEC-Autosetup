@@ -56,17 +56,37 @@ logging. That is the architecture for our harness.
   ASUS EC partially covered; new SuperIO revisions lag support by months.
   Treat VRM thermals as best-effort, never a gate.
 
-## GPU power-virus verdict
+## GPU thrasher: custom, in Rust (CubeCL) — DECIDED direction
 
 No maintained open-source Windows GPU power-virus exists (gpu-burn is
-CUDA/Linux; FurMark/Kombustor/OCCT are closed). A custom D3D12/Vulkan compute
-FMA burner is technically straightforward — on modern boost-limited GPUs any
-well-occupied FMA+bandwidth kernel pins the card at its power limit, which is
-FurMark-class behavior by definition. The real effort is harness robustness
-(TDR handling, per-vendor telemetry, error detection, multi-arch validation):
-**~1–3 weeks of graphics-programmer effort for a v1**, plus per-generation
-smoke tests. Verdict: buy for day one, adopt memtest_vulkan now, build the
-burner only if license costs or CLI limits bite.
+CUDA/Linux; FurMark/Kombustor/OCCT are closed) — and shop experience says
+steady 100% load (even FurMark) **misses real bugs anyway**. The plan is a
+custom thrasher, because the point is *load choreography*, not just wattage:
+
+- **Stack:** Rust + **CubeCL** (the Burn-ecosystem GPU compute language;
+  wgpu/CUDA/ROCm backends → one binary covers NVIDIA/AMD/Intel), shipped as a
+  **compiled binary in the repo/USB payload** (fits the shop's existing Rust
+  competence: cec-support-agent, AllMyStuff). Verify CubeCL's current backend
+  maturity on all three vendors at project start; wgpu/Vulkan compute is the
+  safe floor.
+- **Load-shape engine — the actual differentiator:** scripted scenarios, not
+  a fixed burn: steady FMA saturation; **bursty duty-cycled loads**
+  (ms-scale on/off square waves that hammer VRM transient response and clock
+  ramping); load sweeps; VRAM thrash patterns; and **cross-load choreography**
+  with the CPU side (CPU pinned while the GPU sees burst trains — the
+  worst-case transients that kill marginal builds in games but pass
+  steady-state tests). Scenario files define the choreography so QC can grow
+  a library of known-killer patterns.
+- **Markers built in:** the binary itself emits the QPC-timestamped
+  load-transition markers (every step edge) into the harness JSONL, so burst
+  edges align with the external 1kHz power capture with no inference.
+- Compute results checksummed (error detection, not just crash detection);
+  TDR handling; per-vendor telemetry hooks.
+
+Estimate stands at ~1–3 weeks for a v1 plus per-GPU-generation smoke tests.
+memtest_vulkan is still adopted immediately for the VRAM stage; a licensed
+OCCT/BurnInTest remains optional as the certified customer-facing report
+layer, not the QC engine.
 
 ## Licensing table (shop = commercial use)
 
