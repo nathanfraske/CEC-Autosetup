@@ -13,7 +13,12 @@ Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot 'Common.psm1')
 Import-Module (Join-Path $PSScriptRoot 'Install-Chrome.psm1')
 
-function Test-IsWindowsOs { return ($IsWindows -ne $false) }   # 5.1: $IsWindows is $null
+function Test-IsWindowsOs {
+    # $IsWindows only exists on PowerShell Core; on 5.1 (Desktop) a bare
+    # reference throws under StrictMode, and Desktop only runs on Windows.
+    if ($PSVersionTable.PSEdition -eq 'Core') { return [bool]$IsWindows }
+    return $true
+}
 
 function Get-TweaksConfig {
     [CmdletBinding()]
@@ -64,6 +69,16 @@ function Set-ChromeDefaultBrowser {
     [CmdletBinding(SupportsShouldProcess)]
     param([string] $ProgId = 'ChromeHTML')
     if (-not (Test-IsWindowsOs)) { Write-Log 'Default-browser: skipped (non-Windows).' -Level Debug; return }
+    if (Test-Rehearsal) {
+        $xml = New-AppAssociationsXml -ProgId $ProgId
+        $staged = Join-Path (Get-RehearsalDirectory) 'firstboot-defaultapps.xml'
+        Set-Content -LiteralPath $staged -Value $xml -Encoding UTF8 -WhatIf:$false
+        Write-Log ("REHEARSE: rendered default-app associations XML -> {0}; would run: dism.exe /Online /Import-DefaultAppAssociations:<work>\firstboot-defaultapps.xml" -f $staged) -Level Info -Data @{
+            progId = $ProgId; stagedXml = $staged
+            command = 'dism.exe /Online /Import-DefaultAppAssociations:<work>\firstboot-defaultapps.xml'
+        }
+        return
+    }
     if ($PSCmdlet.ShouldProcess('Default browser', "import default associations -> $ProgId")) {
         try {
             $xml = New-AppAssociationsXml -ProgId $ProgId
@@ -117,6 +132,16 @@ function Set-ChromeTaskbarPin {
     # A real .lnk is most reliable; fall back to the exe path.
     $chrome = Find-Chrome
     $link = if ($chrome) { $chrome } else { '%ProgramFiles%\Google\Chrome\Application\chrome.exe' }
+    if (Test-Rehearsal) {
+        $xml = New-TaskbarLayoutXml -LinkPaths @($link)
+        $staged = Join-Path (Get-RehearsalDirectory) 'LayoutModification.xml'
+        Set-Content -LiteralPath $staged -Value $xml -Encoding UTF8 -WhatIf:$false
+        $target = Join-Path $env:SystemDrive 'Users\Default\AppData\Local\Microsoft\Windows\Shell\LayoutModification.xml'
+        Write-Log ("REHEARSE: rendered taskbar layout XML -> {0}; would write it to {1} (applies to new user profiles)" -f $staged, $target) -Level Info -Data @{
+            link = $link; stagedXml = $staged; targetPath = $target
+        }
+        return
+    }
     if ($PSCmdlet.ShouldProcess('Taskbar', "pin Chrome via LayoutModification ($link)")) {
         try {
             $xml = New-TaskbarLayoutXml -LinkPaths @($link)
@@ -136,6 +161,15 @@ function Disable-OneDriveStartup {
     [CmdletBinding(SupportsShouldProcess)]
     param()
     if (-not (Test-IsWindowsOs)) { Write-Log 'OneDrive startup: skipped (non-Windows).' -Level Debug; return }
+    if (Test-Rehearsal) {
+        $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+        $present = [bool](Get-ItemProperty -Path $run -Name 'OneDrive' -ErrorAction SilentlyContinue)
+        Write-Log ("REHEARSE: would remove 'OneDrive' from {0} (currently present: {1}) and mark it disabled (0x03) under ...\Explorer\StartupApproved\Run" -f $run, $present) -Level Info -Data @{
+            runKey = $run; startupEntryPresent = $present
+            approvedKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
+        }
+        return
+    }
     if ($PSCmdlet.ShouldProcess('OneDrive', 'remove from startup')) {
         try {
             $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
@@ -156,6 +190,14 @@ function Disable-WindowsCopilot {
     [CmdletBinding(SupportsShouldProcess)]
     param()
     if (-not (Test-IsWindowsOs)) { Write-Log 'Copilot: skipped (non-Windows).' -Level Debug; return }
+    if (Test-Rehearsal) {
+        Write-Log "REHEARSE: would set TurnOffWindowsCopilot=1 (DWord) under HKCU:+HKLM:\Software\Policies\Microsoft\Windows\WindowsCopilot and ShowCopilotButton=0 under HKCU:...\Explorer\Advanced" -Level Info -Data @{
+            policyValue = 'TurnOffWindowsCopilot=1'
+            keys = @('HKCU:\Software\Policies\Microsoft\Windows\WindowsCopilot',
+                     'HKLM:\Software\Policies\Microsoft\Windows\WindowsCopilot')
+        }
+        return
+    }
     if ($PSCmdlet.ShouldProcess('Windows Copilot', 'turn off via policy')) {
         try {
             foreach ($root in 'HKCU:', 'HKLM:') {
@@ -208,6 +250,12 @@ function Set-Wallpaper {
     param([Parameter(Mandatory)][string] $Path)
     if (-not (Test-IsWindowsOs)) { Write-Log 'Wallpaper: skipped (non-Windows).' -Level Debug; return $false }
     if (-not (Test-Path -LiteralPath $Path)) { Write-Log "Wallpaper image not found: $Path" -Level Warn; return $false }
+    if (Test-Rehearsal) {
+        Write-Log ("REHEARSE: would set HKCU:\Control Panel\Desktop Wallpaper='{0}' (style Fill) and broadcast SystemParametersInfo(SPI_SETDESKWALLPAPER)" -f $Path) -Level Info -Data @{
+            wallpaper = $Path; style = 'Fill'
+        }
+        return $true
+    }
     if ($PSCmdlet.ShouldProcess('Desktop wallpaper', $Path)) {
         try {
             $desk = 'HKCU:\Control Panel\Desktop'

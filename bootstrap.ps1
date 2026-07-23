@@ -6,11 +6,17 @@
 # (local/USB copy or, for the online one-liner, downloads the repo), then runs
 # src/FirstBoot.ps1 with any forwarded flags.
 #
+# BRING-UP DEFAULT: until the shop's ordered install checklist is wired in, a
+# bare run performs the full-pipeline readiness SELF-CHECK (rehearsal: probes,
+# emulation, verbose logs + JSON report; installs nothing). Pass -Install for
+# the real first-boot install run.
+#
 # USB / image:   powershell -NoProfile -ExecutionPolicy Bypass -File X:\firstboot\bootstrap.ps1
-# Online:        powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/nathanfraske/cec-autosetep/main/bootstrap.ps1 | iex"
+# Online:        powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/nathanfraske/cec-autosetup/main/bootstrap.ps1 | iex"
 
 [CmdletBinding(SupportsShouldProcess)]
 param(
+    [switch]   $Install,             # perform the real install run (bare runs self-check during bring-up)
     [switch]   $IncludeBios,
     [string[]] $Categories,
     [int]      $Osid = 0,
@@ -22,6 +28,12 @@ param(
     [string]   $Mirror,
     [string]   $Model,
     [string]   $Vendor,
+    [switch]   $Rehearse,            # dev dry run: emulate the full stack, install nothing
+    [switch]   $RehearseDownloads,   # with -Rehearse: real downloads/extraction for fidelity
+    [switch]   $SkipWindowsPrep,     # skip the WU-hold + UAC stage
+    [switch]   $SkipBiosUpdate,      # skip BIOS staging + the reboot-to-UEFI hand-off
+    [switch]   $SkipWindowsUpdateRun, # skip the run-WU-fully stage (post-BIOS)
+    [switch]   $SkipVerify,          # skip the stage-4 build verification gate
     [string]   $Repo,                # owner/name override (default below)
     [string]   $Branch = 'main'
 )
@@ -70,7 +82,7 @@ if ($scriptPath) {
 if (-not $repoRoot) {
     # Online one-liner: no local repo. Download a snapshot and run from there.
     if (-not $Repo) {
-        $Repo = if ($env:FIRSTBOOT_REPO) { $env:FIRSTBOOT_REPO } else { 'nathanfraske/cec-autosetep' }
+        $Repo = if ($env:FIRSTBOOT_REPO) { $env:FIRSTBOOT_REPO } else { 'nathanfraske/cec-autosetup' }
     }
     $zipUrl = "https://github.com/$Repo/archive/refs/heads/$Branch.zip"
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ("firstboot_" + [Guid]::NewGuid().ToString('N'))
@@ -88,21 +100,34 @@ if (-not $repoRoot) {
 
 $firstBoot = Join-Path $repoRoot 'src/FirstBoot.ps1'
 
-# --- self-elevate (skip for dry runs) ------------------------------------
-if (-not (Test-IsAdmin) -and -not $WhatIfPreference) {
+# --- bring-up default: self-check unless -Install --------------------------
+if (-not $Install -and -not $Rehearse -and -not $WhatIfPreference) {
+    Write-Host 'No -Install flag: running the pipeline READINESS SELF-CHECK (installs nothing).' -ForegroundColor Yellow
+    Write-Host 'Pass -Install to perform the real first-boot install run.' -ForegroundColor Yellow
+    $Rehearse = $true
+}
+
+# --- self-elevate (skip for dry runs and rehearsals) ----------------------
+if (-not (Test-IsAdmin) -and -not $WhatIfPreference -and -not $Rehearse) {
     Write-Host "Elevation required; relaunching as administrator..."
     $fwd = Get-ForwardArgs -Bound $PSBoundParameters
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scriptPath) + $fwd
-    Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argList
+    # Quote spaced elements (e.g. a repo path under "C:\Users\John Doe\...") -
+    # Start-Process joins the array with spaces and adds no quoting of its own.
+    $argString = ($argList | ForEach-Object { if ($_ -match '\s') { '"{0}"' -f $_ } else { $_ } }) -join ' '
+    Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argString
     return
 }
 
 # --- run ------------------------------------------------------------------
 $fbParams = @{}
 foreach ($k in $PSBoundParameters.Keys) {
-    if ($k -in 'Repo', 'Branch') { continue }
+    if ($k -in 'Repo', 'Branch', 'Install') { continue }   # bootstrap-only flags
     $fbParams[$k] = $PSBoundParameters[$k]
 }
+# Rehearse may have been defaulted on above (bring-up self-check), so pass the
+# effective value, not just the bound one.
+$fbParams['Rehearse'] = [bool]$Rehearse
 
 & $firstBoot @fbParams
 exit $LASTEXITCODE

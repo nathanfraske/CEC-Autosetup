@@ -132,8 +132,22 @@ function Install-App {
     $fallbackUrl = $null
     if ($App.PSObject.Properties['fallbackUrl']) { $fallbackUrl = $App.fallbackUrl }
 
+    if ($wingetId -and -not (Test-Winget)) {
+        Write-Log ("winget not present; '{0}' will use the fallback path." -f $App.name) -Level Trace -Data @{
+            app = [string]$App.name; wingetId = [string]$wingetId
+        }
+    }
+
     if ($wingetId -and (Test-Winget)) {
         $result.Method = 'winget'
+        if (Test-Rehearsal) {
+            $cmd = 'winget install --id {0} -e --silent --accept-package-agreements --accept-source-agreements' -f $wingetId
+            Write-Log ("REHEARSE: would run: {0}" -f $cmd) -Level Info -Data @{
+                app = [string]$App.name; command = $cmd
+            }
+            $result.Status = 'Rehearsed'; $result.Detail = $cmd
+            return $result
+        }
         if ($PSCmdlet.ShouldProcess($App.name, "winget install $wingetId")) {
             try {
                 $p = Start-Process -FilePath 'winget' -ArgumentList @(
@@ -153,6 +167,18 @@ function Install-App {
 
     if ($fallbackUrl) {
         $result.Method = 'fallback-url'
+        if (Test-Rehearsal) {
+            $chrome = Find-Chrome
+            $opener = if ($chrome) { "Chrome ($chrome)" } else { 'Chrome (would be installed first) or the default browser' }
+            $probe = Invoke-HttpProbe -Url $fallbackUrl
+            $reach = if ($probe.Ok) { "reachable (HTTP $($probe.StatusCode))" } else { "NOT reachable ($($probe.Error))" }
+            Write-Log ("REHEARSE: would open {0} in {1}; page {2}" -f $fallbackUrl, $opener, $reach) -Level Info -Data @{
+                app = [string]$App.name; url = [string]$fallbackUrl
+                chromePath = [string]$chrome; pageOk = [bool]$probe.Ok; statusCode = $probe.StatusCode
+            }
+            $result.Status = 'Rehearsed'; $result.Detail = "would open $fallbackUrl"
+            return $result
+        }
         if ($PSCmdlet.ShouldProcess($App.name, "open $fallbackUrl in Chrome")) {
             Open-Url -Url $fallbackUrl
             $result.Status = 'OpenedFallback'; $result.Detail = $fallbackUrl

@@ -78,6 +78,20 @@
       "notes": "Baseline app installed on every build (match.always). winget id Valve.Steam."
     },
     {
+      "name": "Visual C++ Redistributable (x64)",
+      "wingetId": "Microsoft.VCRedist.2015+.x64",
+      "fallbackUrl": "https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist",
+      "match": { "always": true },
+      "notes": "Baseline runtime on every build - practically everything (games, vendor utilities) links against the VC++ 2015-2022 runtime. winget id verified live 2026-07-23 (14.51.36247.0)."
+    },
+    {
+      "name": "Visual C++ Redistributable (x86)",
+      "wingetId": "Microsoft.VCRedist.2015+.x86",
+      "fallbackUrl": "https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist",
+      "match": { "always": true },
+      "notes": "32-bit runtime for the long tail of x86 apps and launchers. winget id verified live 2026-07-23."
+    },
+    {
       "name": "Hyte Nexus",
       "wingetId": null,
       "fallbackUrl": "https://hyte.com/nexus",

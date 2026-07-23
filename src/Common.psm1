@@ -58,6 +58,9 @@ function Get-AppName {
 # ---------------------------------------------------------------------------
 
 $script:LogFile = $null
+$script:JsonLogFile = $null
+$script:LogPhase = ''
+$script:LogPhaseStarted = $null
 
 function Get-ProgramDataRoot {
     <#
@@ -74,7 +77,10 @@ function Get-ProgramDataRoot {
         $root = Join-Path $base $app
     }
     if (-not (Test-Path -LiteralPath $root)) {
-        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        # -WhatIf:$false: log/work paths must exist even in dry runs so a
+        # transcript is always produced (they are the tool's own scratch, not
+        # system state).
+        New-Item -ItemType Directory -Path $root -Force -WhatIf:$false | Out-Null
     }
     return $root
 }
@@ -82,7 +88,7 @@ function Get-ProgramDataRoot {
 function Get-LogDirectory {
     $dir = Join-Path (Get-ProgramDataRoot) 'logs'
     if (-not (Test-Path -LiteralPath $dir)) {
-        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        New-Item -ItemType Directory -Path $dir -Force -WhatIf:$false | Out-Null
     }
     return $dir
 }
@@ -90,7 +96,7 @@ function Get-LogDirectory {
 function Get-WorkDirectory {
     $dir = Join-Path (Get-ProgramDataRoot) 'work'
     if (-not (Test-Path -LiteralPath $dir)) {
-        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        New-Item -ItemType Directory -Path $dir -Force -WhatIf:$false | Out-Null
     }
     return $dir
 }
@@ -98,25 +104,73 @@ function Get-WorkDirectory {
 function Initialize-Log {
     <#
         .SYNOPSIS
-        Picks a timestamped log file under the log directory and returns its path.
+        Picks a timestamped log file under the log directory and returns its
+        path. Also opens a structured JSONL sibling (<name>_<stamp>.jsonl) that
+        receives every Write-Log entry with its phase and data for machine
+        consumption (cross-system dev diffing).
     #>
     [CmdletBinding()]
     param([string] $Name = 'firstboot')
 
     $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
     $script:LogFile = Join-Path (Get-LogDirectory) ("{0}_{1}.log" -f $Name, $stamp)
-    # Touch the file so callers can rely on it existing.
-    New-Item -ItemType File -Path $script:LogFile -Force | Out-Null
+    $script:JsonLogFile = Join-Path (Get-LogDirectory) ("{0}_{1}.jsonl" -f $Name, $stamp)
+    # Touch the files so callers can rely on them existing; -WhatIf:$false so a
+    # transcript is produced even under -WhatIf (documented design intent).
+    New-Item -ItemType File -Path $script:LogFile -Force -WhatIf:$false | Out-Null
+    New-Item -ItemType File -Path $script:JsonLogFile -Force -WhatIf:$false | Out-Null
     return $script:LogFile
 }
 
 function Get-LogFile { return $script:LogFile }
+function Get-JsonLogFile { return $script:JsonLogFile }
+
+function Set-LogPhase {
+    <#
+        .SYNOPSIS
+        Sets the current phase label stamped onto subsequent log entries (text
+        tag + JSONL 'phase' field), and emits the elapsed time of the phase it
+        replaces (Trace + JSONL) so every stage's duration is in the record.
+        Pass '' to clear.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyString()][string] $Phase)
+    if ($script:LogPhase -and $script:LogPhase -ne $Phase -and $script:LogPhaseStarted) {
+        $secs = [Math]::Round(((Get-Date) - $script:LogPhaseStarted).TotalSeconds, 1)
+        Write-Log ("phase '{0}' finished in {1}s" -f $script:LogPhase, $secs) -Level Trace -Phase $script:LogPhase -Data @{ phaseSeconds = $secs }
+        Write-StepDone -Label ("stage: {0}" -f $script:LogPhase) -Seconds $secs
+    }
+    $script:LogPhase = $Phase
+    $script:LogPhaseStarted = Get-Date
+}
+
+function Write-StepDone {
+    <#
+        .SYNOPSIS
+        Prints a faded "done" ledger line for a finished step - greyed
+        checkbox, label, and how long it took - so completed work stays
+        visible under the live progress bars as the run scrolls.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string] $Label,
+        [double] $Seconds = -1,
+        [ValidateSet('ok', 'skip', 'fail')][string] $Kind = 'ok'
+    )
+    $mark = switch ($Kind) { 'ok' { [char]0x2713 } 'skip' { '-' } 'fail' { 'x' } }
+    $color = switch ($Kind) { 'ok' { 'DarkGray' } 'skip' { 'DarkYellow' } 'fail' { 'Red' } }
+    $timeTxt = if ($Seconds -ge 0) { ' ({0}s)' -f [Math]::Round($Seconds, 1) } else { '' }
+    Write-Host ("  [{0}] {1}{2}" -f $mark, $Label, $timeTxt) -ForegroundColor $color
+}
 
 function Write-Log {
     <#
         .SYNOPSIS
-        Writes a timestamped line to the host and appends it to the active log
-        file (if Initialize-Log has been called). Never throws on logging errors.
+        Writes a timestamped line to the host, appends it to the active text log,
+        and appends a structured record to the JSONL log (if Initialize-Log has
+        been called). -Data attaches machine-readable detail to the JSONL record.
+        'Trace' is the super-verbose level: shown on screen during rehearsal,
+        verbose-stream otherwise. Never throws on logging errors.
     #>
     [CmdletBinding()]
     param(
@@ -124,22 +178,43 @@ function Write-Log {
         [AllowEmptyString()]
         [string] $Message,
 
-        [ValidateSet('Info', 'Warn', 'Error', 'Success', 'Debug')]
-        [string] $Level = 'Info'
+        [ValidateSet('Info', 'Warn', 'Error', 'Success', 'Debug', 'Trace')]
+        [string] $Level = 'Info',
+
+        [string] $Phase,
+        [hashtable] $Data
     )
 
-    $line = ('[{0}] [{1}] {2}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Level.ToUpperInvariant(), $Message)
+    $curPhase = if ($PSBoundParameters.ContainsKey('Phase')) { $Phase } else { $script:LogPhase }
+    $tag = if ($curPhase) { "[$curPhase] " } else { '' }
+    $line = ('[{0}] [{1}] {2}{3}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Level.ToUpperInvariant(), $tag, $Message)
 
     switch ($Level) {
         'Error'   { Write-Host $line -ForegroundColor Red }
         'Warn'    { Write-Host $line -ForegroundColor Yellow }
         'Success' { Write-Host $line -ForegroundColor Green }
+        'Trace'   { if (Test-Rehearsal) { Write-Host $line -ForegroundColor DarkGray } else { Write-Verbose $line } }
         'Debug'   { Write-Verbose $line }
         default   { Write-Host $line }
     }
 
     if ($script:LogFile) {
-        try { Add-Content -LiteralPath $script:LogFile -Value $line -Encoding UTF8 -ErrorAction Stop }
+        try { Add-Content -LiteralPath $script:LogFile -Value $line -Encoding UTF8 -ErrorAction Stop -WhatIf:$false }
+        catch { <# logging must never break the run #> }
+    }
+
+    if ($script:JsonLogFile) {
+        try {
+            $entry = [ordered]@{
+                ts    = (Get-Date).ToString('o')
+                level = $Level.ToLowerInvariant()
+                phase = $curPhase
+                msg   = $Message
+            }
+            if ($Data) { $entry['data'] = $Data }
+            Add-Content -LiteralPath $script:JsonLogFile -Value (ConvertTo-Json -InputObject $entry -Compress -Depth 8) `
+                -Encoding UTF8 -ErrorAction Stop -WhatIf:$false
+        }
         catch { <# logging must never break the run #> }
     }
 }
@@ -284,6 +359,289 @@ function Test-FileHash {
 }
 
 # ---------------------------------------------------------------------------
+# Cross-boot state (stage markers, captured prior settings for restores)
+# ---------------------------------------------------------------------------
+
+function Get-FirstBootStatePath {
+    return (Join-Path (Get-ProgramDataRoot) 'state.json')
+}
+
+function Get-FirstBootState {
+    <#
+        .SYNOPSIS
+        Loads the cross-boot state object (%ProgramData%\<app>\state.json), or an
+        empty object when none exists. Used for stage markers (e.g. "BIOS already
+        staged; don't reboot-loop") and captured prior settings for restores.
+    #>
+    [CmdletBinding()]
+    param()
+    $path = Get-FirstBootStatePath
+    if (Test-Path -LiteralPath $path) {
+        try { return (Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json) } catch { }
+    }
+    return [pscustomobject]@{}
+}
+
+function Set-FirstBootStateValue {
+    <#
+        .SYNOPSIS
+        Sets one top-level property on the state object and persists it.
+        Honors -WhatIf: cross-boot state is REAL machine state, and a dry run
+        that wrote it would poison the next real run (e.g. a -WhatIf preview
+        pumping windowsUpdateRun.cycles to the max-cycle cap).
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][string] $Name,
+        [Parameter(Mandatory)][AllowNull()] $Value
+    )
+    $state = Get-FirstBootState
+    if ($PSCmdlet.ShouldProcess((Get-FirstBootStatePath), "set state '$Name'")) {
+        $state | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force
+        ConvertTo-Json -InputObject $state -Depth 8 |
+            Set-Content -LiteralPath (Get-FirstBootStatePath) -Encoding UTF8 -WhatIf:$false
+    }
+    return $state
+}
+
+# ---------------------------------------------------------------------------
+# Rehearsal mode (dev dry-run: emulate everything, mutate nothing)
+# ---------------------------------------------------------------------------
+
+$script:Rehearsal = $false
+$script:RehearsalDownloads = $false
+
+function Enable-Rehearsal {
+    <#
+        .SYNOPSIS
+        Turns on rehearsal mode. Install/tweak functions then emulate their work
+        true-to-life - probe URLs, render artifacts into the rehearsal work area,
+        and log the exact commands they would run - without touching the system.
+        -Downloads additionally performs real downloads + extraction + packer
+        detection (files only; still no installs or registry/system changes).
+    #>
+    [CmdletBinding()]
+    param([switch] $Downloads)
+    $script:Rehearsal = $true
+    $script:RehearsalDownloads = [bool]$Downloads
+}
+
+function Disable-Rehearsal {
+    [CmdletBinding()]
+    param()
+    $script:Rehearsal = $false
+    $script:RehearsalDownloads = $false
+}
+
+function Test-Rehearsal { return $script:Rehearsal }
+function Test-RehearsalDownloads { return ($script:Rehearsal -and $script:RehearsalDownloads) }
+
+function Get-RehearsalDirectory {
+    <#
+        .SYNOPSIS
+        Staging area for rehearsal artifacts (downloads, extracted archives,
+        rendered XMLs). Files only; nothing here is system state.
+    #>
+    $dir = Join-Path (Get-WorkDirectory) 'rehearsal'
+    if (-not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force -WhatIf:$false | Out-Null
+    }
+    return $dir
+}
+
+# ---------------------------------------------------------------------------
+# HTTP probe (reachability + size without downloading)
+# ---------------------------------------------------------------------------
+
+function Get-ContentRangeTotal {
+    <#
+        .SYNOPSIS
+        Total size from a Content-Range header value ('bytes 0-0/12345' -> 12345),
+        or $null when absent/unparseable.
+    #>
+    [CmdletBinding()]
+    param([AllowEmptyString()][AllowNull()][string] $ContentRange)
+    if ($ContentRange -and $ContentRange -match '/\s*(\d+)\s*$') { return [int64]$Matches[1] }
+    return $null
+}
+
+function Invoke-HttpProbe {
+    <#
+        .SYNOPSIS
+        Checks a URL without downloading its body: HEAD first, then a 1-byte
+        ranged GET (several vendor CDNs reject HEAD). Returns
+        { Url; Ok; StatusCode; SizeBytes; FinalUrl; Via; Error }.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string] $Url,
+        [int] $TimeoutSec = 30
+    )
+
+    Set-Tls12
+    $headers = Get-DefaultHttpHeaders
+    $lastErr = $null
+
+    foreach ($mode in 'HEAD', 'RANGE') {
+        $resp = $null
+        try {
+            $req = [Net.HttpWebRequest]::Create($Url)
+            $req.Timeout = $TimeoutSec * 1000
+            $req.AllowAutoRedirect = $true
+            $req.UserAgent = $headers['User-Agent']
+            $req.Accept = $headers['Accept']
+            if ($mode -eq 'HEAD') { $req.Method = 'HEAD' }
+            else { $req.Method = 'GET'; $req.AddRange(0, 0) }
+
+            $resp = $req.GetResponse()
+            $size = $null
+            if ($mode -eq 'RANGE') { $size = Get-ContentRangeTotal ([string]$resp.Headers['Content-Range']) }
+            if (-not $size -and $mode -eq 'HEAD' -and $resp.ContentLength -ge 0) { $size = [int64]$resp.ContentLength }
+
+            return [pscustomobject]@{
+                Url        = $Url
+                Ok         = $true
+                StatusCode = [int]$resp.StatusCode
+                SizeBytes  = $size
+                FinalUrl   = [string]$resp.ResponseUri
+                Via        = $mode
+                Error      = $null
+            }
+        }
+        catch {
+            $lastErr = $_.Exception.Message
+        }
+        finally {
+            if ($resp) { try { $resp.Close() } catch { } }
+        }
+    }
+
+    return [pscustomobject]@{
+        Url = $Url; Ok = $false; StatusCode = $null; SizeBytes = $null
+        FinalUrl = $null; Via = $null; Error = $lastErr
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Environment snapshot (portability + rehearsal diagnostics)
+# ---------------------------------------------------------------------------
+
+function Test-HostReachable {
+    <#
+        .SYNOPSIS
+        $true when a TCP connection to the host:port succeeds within the timeout.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string] $TargetHost,
+        [int] $Port = 443,
+        [int] $TimeoutMs = 3000
+    )
+    $client = New-Object Net.Sockets.TcpClient
+    try {
+        $iar = $client.BeginConnect($TargetHost, $Port, $null, $null)
+        if (-not $iar.AsyncWaitHandle.WaitOne($TimeoutMs)) { return $false }
+        $client.EndConnect($iar)
+        return $true
+    }
+    catch { return $false }
+    finally { $client.Close() }
+}
+
+function Get-SettingsUrlHosts {
+    <#
+        .SYNOPSIS
+        Distinct hostnames from the endpoint URLs in config/defaults.json - the
+        exact hosts a real run would contact. Used for reachability probes.
+    #>
+    [CmdletBinding()]
+    param()
+    $paths = @(
+        'asus.pdInfoBase', 'asus.driversBase', 'asus.cdnBase', 'asus.fallbackBase',
+        'msi.apiBase', 'msi.cdnBase', 'gigabyte.supportBase', 'gigabyte.cdnBase',
+        'asrock.supportBase', 'asrock.cdnBase', 'nvidia.lookupUrl', 'nvidia.driverLookupBase',
+        'chrome.msiUrl'
+    )
+    $hosts = New-Object System.Collections.Generic.List[string]
+    $settings = $null
+    try { $settings = Get-Settings } catch { return @() }
+    foreach ($p in $paths) {
+        $node = $settings
+        foreach ($seg in $p.Split('.')) {
+            if ($null -ne $node -and $node.PSObject.Properties[$seg]) { $node = $node.PSObject.Properties[$seg].Value }
+            else { $node = $null; break }
+        }
+        if ($node -is [string] -and $node -match '^https?://') {
+            try {
+                $h = ([uri]$node).Host
+                if ($h -and -not $hosts.Contains($h)) { $hosts.Add($h) | Out-Null }
+            } catch { }
+        }
+    }
+    return $hosts.ToArray()
+}
+
+function Get-EnvironmentSnapshot {
+    <#
+        .SYNOPSIS
+        Captures the machine/runtime facts a dev needs to interpret a log from
+        another system: OS, PowerShell, elevation, TLS, tooling presence, disk,
+        memory, and (unless -SkipNetworkProbes) TCP reachability of every vendor
+        host in config/defaults.json.
+    #>
+    [CmdletBinding()]
+    param([switch] $SkipNetworkProbes)
+
+    $os = $null
+    try { $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop } catch { }
+    $cs = $null
+    try { $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop } catch { }
+
+    $wingetVersion = $null
+    $wingetPresent = [bool](Get-Command winget -ErrorAction SilentlyContinue)
+    if ($wingetPresent) {
+        try { $wingetVersion = [string](& winget --version) } catch { }
+    }
+
+    $bits = $null
+    try { $bits = [string](Get-Service -Name BITS -ErrorAction Stop).Status } catch { }
+
+    $freeGb = $null
+    try {
+        $sysDrive = ($env:SystemDrive).TrimEnd(':')
+        if ($sysDrive) { $freeGb = [Math]::Round((Get-PSDrive -Name $sysDrive -ErrorAction Stop).Free / 1GB, 1) }
+    } catch { }
+
+    $memGb = $null
+    if ($cs) { try { $memGb = [Math]::Round($cs.TotalPhysicalMemory / 1GB, 1) } catch { } }
+
+    $hostsProbed = @()
+    if (-not $SkipNetworkProbes) {
+        $hostsProbed = @(Get-SettingsUrlHosts | ForEach-Object {
+            [pscustomobject]@{ Host = $_; Reachable = (Test-HostReachable -TargetHost $_) }
+        })
+    }
+
+    return [pscustomobject]@{
+        ComputerName    = $env:COMPUTERNAME
+        OsCaption       = if ($os) { [string]$os.Caption } else { [string][Environment]::OSVersion.VersionString }
+        OsVersion       = if ($os) { [string]$os.Version } else { $null }
+        OsBuild         = if ($os) { [string]$os.BuildNumber } else { $null }
+        PsVersion       = $PSVersionTable.PSVersion.ToString()
+        PsEdition       = [string]$PSVersionTable.PSEdition
+        Elevated        = Test-Admin
+        ExecutionPolicy = [string](Get-ExecutionPolicy)
+        TlsProtocols    = [string][Net.ServicePointManager]::SecurityProtocol
+        WingetPresent   = $wingetPresent
+        WingetVersion   = $wingetVersion
+        BitsService     = $bits
+        SystemDriveFreeGB = $freeGb
+        MemoryGB        = $memGb
+        VendorHosts     = $hostsProbed
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Admin / elevation
 # ---------------------------------------------------------------------------
 
@@ -293,7 +651,9 @@ function Test-Admin {
         $true if the current process is elevated. On non-Windows (dev/test) we
         report based on the effective uid so the suite can run unprivileged.
     #>
-    if ($IsWindows -eq $false) {
+    # $IsWindows only exists on PowerShell Core; on 5.1 (Desktop, Windows-only)
+    # a bare reference throws under StrictMode, so only consult it on Core.
+    if ($PSVersionTable.PSEdition -eq 'Core' -and -not $IsWindows) {
         try { return ((id -u) -eq 0) } catch { return $false }
     }
     try {
@@ -314,7 +674,11 @@ function Assert-Admin {
 Export-ModuleMember -Function `
     Get-FirstBootRoot, Get-Settings, Get-AppName, `
     Get-ProgramDataRoot, Get-LogDirectory, Get-WorkDirectory, `
-    Initialize-Log, Get-LogFile, Write-Log, `
+    Initialize-Log, Get-LogFile, Get-JsonLogFile, Set-LogPhase, Write-Log, Write-StepDone, `
     Set-Tls12, Get-DefaultHttpHeaders, Invoke-Http, `
     Get-FileHashValue, Test-FileHash, `
+    Get-FirstBootStatePath, Get-FirstBootState, Set-FirstBootStateValue, `
+    Enable-Rehearsal, Disable-Rehearsal, Test-Rehearsal, Test-RehearsalDownloads, `
+    Get-RehearsalDirectory, Get-ContentRangeTotal, Invoke-HttpProbe, `
+    Test-HostReachable, Get-SettingsUrlHosts, Get-EnvironmentSnapshot, `
     Test-Admin, Assert-Admin

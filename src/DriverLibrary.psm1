@@ -56,7 +56,12 @@ function Get-MirrorUrl {
         [Parameter(Mandatory)][string] $RelativePath,
         [Parameter(Mandatory)][string] $MirrorBase
     )
-    $segs = $RelativePath.Trim('/').Split('/') | ForEach-Object { [uri]::EscapeDataString($_) }
+    $segs = $RelativePath.Trim('/').Split('/') | ForEach-Object {
+        # .NET Framework's EscapeDataString (RFC 2396) leaves !'()* bare; encode
+        # them too so mirror URLs are byte-identical on PowerShell 5.1 and 7.
+        [uri]::EscapeDataString($_).Replace('!', '%21').Replace("'", '%27').
+            Replace('(', '%28').Replace(')', '%29').Replace('*', '%2A')
+    }
     return ($MirrorBase.TrimEnd('/') + '/' + ($segs -join '/'))
 }
 

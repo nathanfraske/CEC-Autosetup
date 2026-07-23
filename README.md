@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# CEC-Autosetep
+# CEC-Autosetup
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![CI](https://github.com/nathanfraske/cec-autosetep/actions/workflows/ci.yml/badge.svg)](https://github.com/nathanfraske/cec-autosetep/actions/workflows/ci.yml)
+[![CI](https://github.com/nathanfraske/cec-autosetup/actions/workflows/ci.yml/badge.svg)](https://github.com/nathanfraske/cec-autosetup/actions/workflows/ci.yml)
 
 > Turn a freshly imaged Windows PC into a fully driver-equipped machine with **one
 > script on first boot.** Detect the motherboard, fetch the **latest official
@@ -18,7 +18,7 @@ Licensed under the **Apache License 2.0** (see [`LICENSE`](LICENSE) and [`NOTICE
 ## Why
 
 A custom-PC shop images many machines across mixed board brands. Drivers are the
-tedious, error-prone last mile. CEC-Autosetep automates it:
+tedious, error-prone last mile. CEC-Autosetup automates it:
 
 1. **Detect** the motherboard (`Win32_BaseBoard`).
 2. **Identify** the vendor (ASUS / Gigabyte / ASRock today).
@@ -49,24 +49,37 @@ where it doesn't.
 
 ## Quickstart
 
+> **Bring-up default (current):** while the shop's ordered install checklist is
+> being finalised, a **bare run performs the full-pipeline readiness
+> self-check** — it probes, emulates and reports ([rehearsal mode](docs/rehearsal.md))
+> and installs **nothing**. Pass **`-Install`** for the real first-boot run.
+
 ### From a USB stick / imaged drive (offline-friendly)
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File X:\CEC-Autosetep\bootstrap.ps1
+# Readiness self-check (bring-up default; installs nothing):
+powershell -NoProfile -ExecutionPolicy Bypass -File X:\CEC-Autosetup\bootstrap.ps1
+
+# The real first-boot install run:
+powershell -NoProfile -ExecutionPolicy Bypass -File X:\CEC-Autosetup\bootstrap.ps1 -Install
 ```
 
 `bootstrap.ps1` sets TLS 1.2, sets a process-scoped `ExecutionPolicy Bypass`,
-self-elevates if needed, then runs the engine. Add flags as needed:
+self-elevates if needed (install runs only), then runs the engine. Add flags as
+needed:
 
 ```powershell
 # Dry run: show exactly what would be installed, install nothing.
-powershell -NoProfile -ExecutionPolicy Bypass -File X:\CEC-Autosetep\bootstrap.ps1 -WhatIf
+powershell -NoProfile -ExecutionPolicy Bypass -File X:\CEC-Autosetup\bootstrap.ps1 -WhatIf
+
+# Max-fidelity rehearsal: also really download + extract driver packages.
+powershell -NoProfile -ExecutionPolicy Bypass -File X:\CEC-Autosetup\bootstrap.ps1 -Rehearse -RehearseDownloads
 ```
 
 ### Online one-liner (repo public + network at first boot)
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/nathanfraske/cec-autosetep/main/bootstrap.ps1 | iex"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/nathanfraske/cec-autosetup/main/bootstrap.ps1 | iex"
 ```
 
 When run this way (no local copy), `bootstrap.ps1` downloads a snapshot of the
@@ -79,6 +92,13 @@ See [`docs/autounattend.md`](docs/autounattend.md) to wire this into
 
 | Flag | Effect |
 | --- | --- |
+| `-Install` | Perform the **real install run**. (Bring-up default: a bare run self-checks instead.) |
+| `-Rehearse` | [Readiness self-check](docs/rehearsal.md): emulate the full stack true-to-life, install nothing; super-verbose logs + JSONL + a collectable JSON report. |
+| `-RehearseDownloads` | With `-Rehearse`: really download + extract + packer-detect (files only) for max fidelity. |
+| `-SkipWindowsPrep` | Skip [stage 1a](docs/bios-stage.md): the temporary Windows Update hold + UAC disable. |
+| `-SkipBiosUpdate` | Skip [stage 1b](docs/bios-stage.md): BIOS staging + the reboot-to-UEFI hand-off. |
+| `-SkipWindowsUpdateRun` | Skip [stage 2](docs/windows-update-strategy.md): the run-Windows-Update-fully pass that precedes vendor drivers. |
+| `-SkipVerify` | Skip [stage 4](docs/windows-update-strategy.md): the build gate (WU driver re-offer guard + zero-splat Device Manager audit). |
 | `-WhatIf` | Dry run. Plans everything, installs nothing. |
 | `-IncludeBios` | List BIOS entries. **Never flashes** — listing only. |
 | `-Categories a,b` | Explicit category allow-list (default: skip pure utilities). |
@@ -101,11 +121,11 @@ See [`docs/autounattend.md`](docs/autounattend.md) to wire this into
 | **ASRock** | browser-required (Incapsula + XHR) | constructed URL | ⚠️ fallback-only | `X870E Taichi` → opens `…/mb/AMD/X870E%20Taichi/index.asp#Download` |
 
 > **ASUS is model-keyed, not `pdid`-keyed.** Sending the legacy `pdid` breaks
-> current-gen boards (Z890/X870E); CEC-Autosetep keys on the model name +
+> current-gen boards (Z890/X870E); CEC-Autosetup keys on the model name +
 > `pdhashedid`, which works across all generations.
 
 ASRock is **fallback-only**: the driver list loads via an undocumented
-client-side XHR that has not been captured. CEC-Autosetep opens the correct
+client-side XHR that has not been captured. CEC-Autosetup opens the correct
 ASRock page in Chrome instead.
 
 A small **mapping table** (`config/mapping.json`) reconciles SMBIOS names to
@@ -223,17 +243,34 @@ tests/                   offline Pester suite + recorded fixtures
 ## Development
 
 Requires PowerShell (Windows PowerShell 5.1 for runtime; PowerShell 7+ is fine
-for dev/test). The test suite is **offline** — it uses only `tests/fixtures/`.
+for dev/test). On a **fresh Windows install**, one command provisions the dev
+tooling (Pester 5.5+, PSScriptAnalyzer; CurrentUser scope, official PSGallery):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/Initialize-DevEnvironment.ps1
+```
+
+The test suite is **offline** — it uses only `tests/fixtures/`.
 
 ```powershell
 Invoke-ScriptAnalyzer -Path ./src -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
 Invoke-Pester -Path ./tests
 ```
 
-CI runs both on `windows-latest` with no network access to vendor sites.
+CI runs both on `windows-latest` with no network access to vendor sites. To
+check how far the stack gets on any given machine, run the
+[rehearsal self-check](docs/rehearsal.md) and collect
+`%ProgramData%\firstboot\logs\rehearsal_<stamp>.json`.
 
 ## Documentation
 
+- [`docs/bios-stage.md`](docs/bios-stage.md) — stage 1: WU hold + UAC, latest non-beta BIOS staging, reboot-to-UEFI hand-off (the tool never flashes), offline fallbacks.
+- [`docs/driver-install-order.md`](docs/driver-install-order.md) — researched install-order spec (chipset → platform → LAN/BT/Wi-Fi → GPU → audio, restart points, skip rules) for the upcoming ordered pipeline.
+- [`docs/windows-update-strategy.md`](docs/windows-update-strategy.md) — researched WU strategy: hold mechanics, run-WU-fully-then-vendor-drivers validation, completion detection, ship policy.
+- [`docs/allmystuff-networking.md`](docs/allmystuff-networking.md) — **design proposal**: shop networking over AllMyStuff (mesh control plane: presence/remote-hands/reports; HTTP mirror stays the data plane), stage-1b install, enrollment, phases, open questions.
+- [`docs/bios-settings.md`](docs/bios-settings.md) — researched: verify-from-Windows checklist (Secure Boot/TPM attestation/ReBAR/XMP/x16/VBS — stage-4-ready) + set-from-software verdicts (profiles, SCEWIN, KVM automation) + GNA verdict.
+- [`docs/stress-harness.md`](docs/stress-harness.md) — researched QC stress design: hybrid buy(OCCT)+build(Prime95/memtest_vulkan/diskspd/LHM/WHEA) plan, 1kHz-correlation marker design, licensing table, phasing.
+- [`docs/rehearsal.md`](docs/rehearsal.md) — the readiness self-check: what's real vs. emulated, log/report artifacts, cross-machine collection.
 - [`docs/architecture.md`](docs/architecture.md) — data flow, provider contract, fallback flow, apps layer.
 - [`docs/vendor-contracts.md`](docs/vendor-contracts.md) — the live vendor contracts, dated, with a "this is undocumented and may change" banner, plus open items.
 - [`docs/autounattend.md`](docs/autounattend.md) — wiring into `autounattend.xml` / `SetupComplete.cmd`.

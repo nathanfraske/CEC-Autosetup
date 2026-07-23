@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-# CEC-Autosetep driver-library LAN mirror (HTTP server).
+# CEC-Autosetup driver-library LAN mirror (HTTP server).
 # Install: see docs/driver-library.md. Adjust User, paths, and Port to taste.
 #   sudo cp tools/systemd/cec-driver-library.service /etc/systemd/system/
 #   sudo systemctl daemon-reload && sudo systemctl enable --now cec-driver-library
 
 [Unit]
-Description=CEC-Autosetep driver library (LAN mirror)
+Description=CEC-Autosetup driver library (LAN mirror)
 After=network-online.target
 Wants=network-online.target
 
@@ -14,7 +14,7 @@ Type=simple
 User=cec
 Group=cec
 # Repo checkout and the built library directory:
-Environment=CEC_HOME=/opt/cec-autosetep
+Environment=CEC_HOME=/opt/cec-autosetup
 Environment=CEC_LIBRARY=/srv/cec-drivers
 ExecStart=/usr/bin/pwsh -NoProfile -File ${CEC_HOME}/tools/Serve-DriverLibrary.ps1 -Root ${CEC_LIBRARY} -Port 8080
 Restart=on-failure

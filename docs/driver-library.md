@@ -92,7 +92,7 @@ current + last-gen drivers weekly (`OnCalendar=Sun 03:30`). Edit paths/user
 ## 4. Point the clients at it
 
 ```
-powershell -NoProfile -ExecutionPolicy Bypass -File X:\CEC-Autosetep\bootstrap.ps1 -Mirror http://10.0.0.10:8080
+powershell -NoProfile -ExecutionPolicy Bypass -File X:\CEC-Autosetup\bootstrap.ps1 -Mirror http://10.0.0.10:8080
 ```
 
 …or bake it in so every USB/image uses the mirror by default —

@@ -61,6 +61,17 @@ function Install-Chrome {
     $settings = Get-Settings
     $msiUrl = $settings.chrome.msiUrl
 
+    if (Test-Rehearsal) {
+        $probe = Invoke-HttpProbe -Url $msiUrl
+        $sizeTxt = if ($probe.Ok -and $probe.SizeBytes) { '{0:N1} MB' -f ($probe.SizeBytes / 1MB) } else { 'unprobed' }
+        Write-Log ("REHEARSE: Chrome absent; would download enterprise MSI ({0}) and run: msiexec.exe /i ""<work>\googlechromestandaloneenterprise64.msi"" /qn /norestart (winget fallback present: {1})" -f `
+            $sizeTxt, (Test-Winget)) -Level Info -Data @{
+            msiUrl = [string]$msiUrl; msiOk = [bool]$probe.Ok; sizeBytes = $probe.SizeBytes
+            wingetFallback = (Test-Winget)
+        }
+        return $null
+    }
+
     # Primary: official enterprise MSI, silent.
     if ($PSCmdlet.ShouldProcess('Google Chrome', "Download + silent install from $msiUrl")) {
         try {
@@ -110,6 +121,15 @@ function Open-Url {
         [Parameter(Mandatory)][string] $Url,
         [string] $ChromePath
     )
+
+    if (Test-Rehearsal) {
+        $chrome = if ($ChromePath) { $ChromePath } else { Find-Chrome }
+        $opener = if ($chrome) { "Chrome ($chrome)" } else { 'Chrome (absent; a real run would install it first, else use the default browser)' }
+        Write-Log ("REHEARSE: would open {0} in {1}" -f $Url, $opener) -Level Info -Data @{
+            url = $Url; chromePath = [string]$chrome
+        }
+        return
+    }
 
     if (-not $ChromePath) { $ChromePath = Find-Chrome }
     if (-not $ChromePath) { $ChromePath = Install-Chrome }
