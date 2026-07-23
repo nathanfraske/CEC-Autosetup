@@ -51,11 +51,15 @@ Describe 'Rehearsal: structured JSONL logging' {
         Set-LogPhase 'unit-test'
         Write-Log 'structured entry' -Level Info -Data @{ answer = 42 }
         Set-LogPhase ''
-        $last = (Get-Content -LiteralPath $script:jsonPath | Select-Object -Last 1) | ConvertFrom-Json
-        $last.phase | Should -Be 'unit-test'
-        $last.msg | Should -Be 'structured entry'
-        $last.level | Should -Be 'info'
-        $last.data.answer | Should -Be 42
+        $lines = Get-Content -LiteralPath $script:jsonPath | ForEach-Object { $_ | ConvertFrom-Json }
+        $rec = $lines | Where-Object { $_.msg -eq 'structured entry' } | Select-Object -Last 1
+        $rec.phase | Should -Be 'unit-test'
+        $rec.level | Should -Be 'info'
+        $rec.data.answer | Should -Be 42
+        # The phase switch also records the phase's duration.
+        $dur = $lines | Where-Object { $_.msg -match "phase 'unit-test' finished" } | Select-Object -Last 1
+        $dur | Should -Not -BeNullOrEmpty
+        $dur.data.phaseSeconds | Should -BeGreaterOrEqual 0
     }
 
     It 'records Trace entries in JSONL even when not displayed' {

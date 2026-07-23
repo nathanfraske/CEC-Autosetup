@@ -398,8 +398,14 @@ if ($drivers) {
                 $driverResults.Add([pscustomobject]@{ Name = $entry.Name; Category = $entry.Category; Version = $entry.Version; Method = 'bios'; Status = 'ListedOnly'; Detail = $entry.Url }) | Out-Null
                 continue
             }
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
             $r = Install-DriverPackage -Entry $entry
+            $sw.Stop()
             $driverResults.Add($r) | Out-Null
+            Write-Log ("  {0} -> {1} in {2}s ({3})" -f $entry.Name, $r.Status, [Math]::Round($sw.Elapsed.TotalSeconds, 1), $r.Method) -Level Trace -Data @{
+                name = [string]$entry.Name; status = [string]$r.Status
+                method = [string]$r.Method; seconds = [Math]::Round($sw.Elapsed.TotalSeconds, 1)
+            }
             if ($r.Status -eq 'Installed') { $installedInGroup = $true }
         }
 

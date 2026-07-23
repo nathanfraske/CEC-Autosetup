@@ -95,6 +95,9 @@ function Install-ScannedUpdates {
         $u = $Updates.Item($i)
         if (-not $u.EulaAccepted) { try { $u.AcceptEula() } catch { } }
         $toInstall.Add($u) | Out-Null
+        Write-Log ("  queued: {0} (type {1})" -f [string]$u.Title, [int]$u.Type) -Level Trace -Data @{
+            title = [string]$u.Title; type = [int]$u.Type
+        }
     }
 
     # WUA download/install can throw outright (WU_E_NO_INTERACTIVE_USER, a
@@ -114,7 +117,11 @@ function Install-ScannedUpdates {
         $result.ResultCode = [int]$installResult.ResultCode        # 2=Succeeded, 3=SucceededWithErrors
         $result.RebootRequired = [bool]$installResult.RebootRequired
         for ($i = 0; $i -lt $toInstall.Count; $i++) {
-            if ([int]$installResult.GetUpdateResult($i).ResultCode -in 2, 3) { $result.Installed++ } else { $result.Failed++ }
+            $code = [int]$installResult.GetUpdateResult($i).ResultCode
+            if ($code -in 2, 3) { $result.Installed++ } else { $result.Failed++ }
+            Write-Log ("  result {0}: {1}" -f $code, [string]$toInstall.Item($i).Title) -Level Trace -Data @{
+                title = [string]$toInstall.Item($i).Title; resultCode = $code
+            }
         }
         Write-Log ("Windows updates installed: {0} ok, {1} failed, reboot required: {2}" -f `
             $result.Installed, $result.Failed, $result.RebootRequired) -Level $(if ($result.Failed -eq 0) { 'Success' } else { 'Warn' })

@@ -60,6 +60,7 @@ function Get-AppName {
 $script:LogFile = $null
 $script:JsonLogFile = $null
 $script:LogPhase = ''
+$script:LogPhaseStarted = $null
 
 function Get-ProgramDataRoot {
     <#
@@ -128,11 +129,18 @@ function Set-LogPhase {
     <#
         .SYNOPSIS
         Sets the current phase label stamped onto subsequent log entries (text
-        tag + JSONL 'phase' field). Pass '' to clear.
+        tag + JSONL 'phase' field), and emits the elapsed time of the phase it
+        replaces (Trace + JSONL) so every stage's duration is in the record.
+        Pass '' to clear.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][AllowEmptyString()][string] $Phase)
+    if ($script:LogPhase -and $script:LogPhase -ne $Phase -and $script:LogPhaseStarted) {
+        $secs = [Math]::Round(((Get-Date) - $script:LogPhaseStarted).TotalSeconds, 1)
+        Write-Log ("phase '{0}' finished in {1}s" -f $script:LogPhase, $secs) -Level Trace -Phase $script:LogPhase -Data @{ phaseSeconds = $secs }
+    }
     $script:LogPhase = $Phase
+    $script:LogPhaseStarted = Get-Date
 }
 
 function Write-Log {

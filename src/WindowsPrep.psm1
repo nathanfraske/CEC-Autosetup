@@ -51,8 +51,12 @@ function Set-RegistryDword {
         [Parameter(Mandatory)][int] $Value
     )
     if ($PSCmdlet.ShouldProcess("$Path\$Name", "set DWord $Value")) {
+        $prior = Get-RegistryValueOrNull -Path $Path -Name $Name
         if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
         Set-ItemProperty -Path $Path -Name $Name -Value $Value -Type DWord
+        Write-Log ("registry: {0}\{1} = {2} (was: {3})" -f $Path, $Name, $Value, $(if ($null -ne $prior) { $prior } else { 'absent' })) -Level Trace -Data @{
+            path = $Path; name = $Name; value = $Value; prior = $prior
+        }
     }
 }
 
