@@ -37,6 +37,33 @@ Describe 'WU run: Invoke-WindowsUpdateStage' {
         $r.RebootRequested | Should -BeFalse
     }
 
+    It 'plans only under -WhatIf: no scan, no state writes (audit #1 regression)' {
+        Mock -ModuleName WindowsUpdateRun Get-FirstBootState { [pscustomobject]@{} }
+        Mock -ModuleName WindowsUpdateRun Get-PendingRebootStatus { [pscustomobject]@{ Pending = $false; Reasons = @() } }
+        Mock -ModuleName WindowsUpdateRun Get-WindowsUpdateScan { throw 'must not scan under -WhatIf' }
+        Mock -ModuleName WindowsUpdateRun Set-FirstBootStateValue { throw 'must not write state under -WhatIf' }
+        $r = Invoke-WindowsUpdateStage -WhatIf
+        $r.Status | Should -Be 'WhatIf'
+        $r.RebootRequested | Should -BeFalse
+        Should -Invoke -ModuleName WindowsUpdateRun Get-WindowsUpdateScan -Times 0 -Exactly
+        Should -Invoke -ModuleName WindowsUpdateRun Set-FirstBootStateValue -Times 0 -Exactly
+    }
+
+    It 'bounds the pre-scan pending-reboot path by MaxCycles (audit #2 regression)' {
+        Mock -ModuleName WindowsUpdateRun Get-FirstBootState {
+            [pscustomobject]@{ windowsUpdateRun = [pscustomobject]@{ completed = $false; cycles = 8 } }
+        }
+        Mock -ModuleName WindowsUpdateRun Get-PendingRebootStatus {
+            [pscustomobject]@{ Pending = $true; Reasons = @('PendingFileRenameOperations') }
+        }
+        $r = Invoke-WindowsUpdateStage -MaxCycles 8
+        $r.Status | Should -Be 'Blocked'
+        $r.Detail | Should -Match 'pending reboot persists'
+        $r.RebootRequested | Should -BeFalse
+        Should -Invoke -ModuleName WindowsUpdateRun Register-ResumeAfterReboot -Times 0 -Exactly
+        Should -Invoke -ModuleName WindowsUpdateRun Restart-ForWindowsUpdate -Times 0 -Exactly
+    }
+
     Context 'rehearsal' {
         BeforeAll { Enable-Rehearsal }
         AfterAll { Disable-Rehearsal }

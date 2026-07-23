@@ -3,9 +3,13 @@
 # Driver install order (researched spec for the ordered pipeline)
 
 Researched 2026-07-23 (web sources cited at the bottom; see confidence notes).
-This is the **input spec** for the ordered-install work — the runtime still
-installs in vendor-list order until the shop's checklist ordering is wired in.
-Each step maps to a vendor download-page CATEGORY string.
+**Implemented**: `config/install-order.json` + `src/DriverOrder.psm1` turn this
+spec into the runtime plan — entries are grouped and installed in this order,
+conditional rules skip with a logged reason, and `restartAfter` boundaries
+force a reboot with resume-task resume (progress tracked in `state.json`, so each
+boot continues from the next group). The rehearsal self-check prints the full
+plan with `[RESTART]` markers. Each step maps to a vendor download-page
+CATEGORY string.
 
 Assumes: BIOS already updated (stage 1), Windows 11 at desktop, and — per shop
 practice, pending the WU-strategy research — Windows Update has already run

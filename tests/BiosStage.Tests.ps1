@@ -40,6 +40,17 @@ Describe 'BIOS: beta filter + latest pick' {
         Select-LatestBios -Entries @([pscustomobject]@{ Name = 'Beta only'; Version = '1 beta' }) | Should -BeNullOrEmpty
         Select-LatestBios -Entries @() | Should -BeNullOrEmpty
     }
+
+    It 'falls back to vendor order when version formats are mixed (audit #12 regression)' {
+        $entries = @(
+            [pscustomobject]@{ Name = 'BIOS 2103'; Version = '2103' }
+            [pscustomobject]@{ Name = 'BIOS 1.10'; Version = '1.10' }
+        )
+        # Mixed integer + dotted formats are incomparable: trust newest-first.
+        (Select-LatestBios -Entries $entries).Version | Should -Be '2103'
+        $reversed = @($entries[1], $entries[0])
+        (Select-LatestBios -Entries $reversed).Version | Should -Be '1.10'
+    }
 }
 
 Describe 'BIOS: firmware file discovery' {
@@ -123,6 +134,36 @@ Describe 'BIOS: Invoke-BiosStage rehearsal flow' {
         $r = Invoke-BiosStage -Board $script:board -Provider $script:provider -Identity $null -RawDrivers @()
         $r.Status | Should -Be 'Blocked'
         $r.Detail | Should -Match 'offline'
+    }
+
+    It 'probes the mirror host when the mirror supplied the drivers (audit #4 regression)' {
+        Mock -ModuleName BiosUpdate Get-FirstBootState { [pscustomobject]@{} }
+        Mock -ModuleName BiosUpdate Test-HostReachable { param($TargetHost) $TargetHost -eq '10.0.0.10' }
+        # No provider object (mirror-fed run), mirror reachable, no BIOS entries
+        # -> must land on Fallback, NOT the false-offline Blocked path.
+        $r = Invoke-BiosStage -Board $script:board -Provider $null -Identity $null -RawDrivers @() -MirrorBase 'http://10.0.0.10:8080'
+        $r.Status | Should -Be 'Fallback'
+    }
+
+    It 'does not mark complete when the UEFI reboot fails (audit #7 regression)' {
+        # Real-path behavior: rehearsal must be OFF for this one.
+        Disable-Rehearsal
+        try {
+            Mock -ModuleName BiosUpdate Get-FirstBootState { [pscustomobject]@{} }
+            Mock -ModuleName BiosUpdate Test-HostReachable { $true }
+            Mock -ModuleName BiosUpdate Save-BiosPackage {
+                [pscustomobject]@{ FirmwarePath = 'C:\x\B.CAP'; StagedPath = 'C:\stage\B.CAP'; SizeBytes = 1024 }
+            }
+            Mock -ModuleName BiosUpdate Restart-ToFirmware { $false }
+            $script:written = $null
+            Mock -ModuleName BiosUpdate Set-FirstBootStateValue { param($Name, $Value) $script:written = $Value }
+            $raw = @([pscustomobject]@{ Category = 'BIOS'; Name = 'BIOS 2103'; Version = '2103'; Url = 'https://vendor.example/b2103.zip' })
+            $r = Invoke-BiosStage -Board $script:board -Provider $script:provider -Identity $null -RawDrivers $raw
+            $r.Status | Should -Be 'StagedManualReboot'
+            $r.RebootRequested | Should -BeFalse
+            $script:written.completed | Should -BeFalse
+            $script:written.stagedButNotRebooted | Should -BeTrue
+        } finally { Enable-Rehearsal }
     }
 
     It 'Restart-ToFirmware only logs under rehearsal' {

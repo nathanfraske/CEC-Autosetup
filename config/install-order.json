@@ -1,0 +1,82 @@
+{
+  "_comment": "Ordered driver-install plan (docs/driver-install-order.md). Groups are evaluated top-down: an entry joins the FIRST group (valid for the current platform) whose patterns match its Category, falling back to its Name; '*' is the trailing catch-all so nothing is dropped. Bluetooth/wireless sit ABOVE lan on purpose: MSI files BT+Wi-Fi+Ethernet all under Category 'LAN Drivers', so the radio groups must win on Name before the lan category pattern swallows them (BT-before-Wi-Fi is the load-bearing order). The storage gate matches RST/VMD/RAID names only - generic SATA/NVMe controller drivers fall to the catch-all and still install. A group with a 'condition' name is skipped entirely (entries recorded as SkippedByRule) when that condition is false - conditions are computed at runtime (DriverOrder.psm1). 'restartAfter': the pipeline forces a reboot after the group when anything in it actually installed, resuming via the elevated resume task.",
+  "groups": [
+    {
+      "key": "chipset",
+      "title": "Chipset",
+      "match": ["chipset"],
+      "restartAfter": true
+    },
+    {
+      "key": "me",
+      "title": "Intel ME",
+      "match": ["management engine", "\\bmei\\b", "\\bintel me\\b"],
+      "platforms": ["intel"]
+    },
+    {
+      "key": "serialio",
+      "title": "Serial IO",
+      "match": ["serial io"],
+      "platforms": ["intel"]
+    },
+    {
+      "key": "platformperf",
+      "title": "Platform performance (IPPP/DTT)",
+      "match": ["platform performance", "dynamic tuning", "\\bdtt\\b", "\\bippp\\b", "\\bipf\\b"],
+      "platforms": ["intel"],
+      "condition": "apoEligible"
+    },
+    {
+      "key": "npu",
+      "title": "NPU (AI Boost)",
+      "match": ["\\bnpu\\b", "ai boost"],
+      "platforms": ["intel"],
+      "condition": "series800"
+    },
+    {
+      "key": "gna",
+      "title": "GNA (hard-deny)",
+      "match": ["\\bgna\\b", "gaussian"],
+      "condition": "never"
+    },
+    {
+      "key": "storage",
+      "title": "Storage (RST/VMD/RAID)",
+      "match": ["\\brst\\b", "rapid storage", "\\bvmd\\b", "raid", "raidxpert"],
+      "condition": "vmdOrRaid",
+      "restartAfter": true
+    },
+    {
+      "key": "bluetooth",
+      "title": "Bluetooth",
+      "match": ["bluetooth", "\\bbt\\b", "\\bibt\\b"]
+    },
+    {
+      "key": "wireless",
+      "title": "Wi-Fi / Wireless",
+      "match": ["wireless", "\\bwlan\\b", "wi-?fi"]
+    },
+    {
+      "key": "lan",
+      "title": "LAN / Ethernet",
+      "match": ["\\blan\\b", "ethernet"]
+    },
+    {
+      "key": "igpu",
+      "title": "iGPU / VGA",
+      "match": ["\\bvga\\b", "graphics"],
+      "condition": "igpuPresent"
+    },
+    {
+      "key": "audio",
+      "title": "Audio",
+      "match": ["audio", "sound"],
+      "restartAfter": true
+    },
+    {
+      "key": "other",
+      "title": "Everything else",
+      "match": ["*"]
+    }
+  ]
+}

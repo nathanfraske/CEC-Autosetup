@@ -33,6 +33,7 @@ param(
     [switch]   $SkipWindowsPrep,     # skip the WU-hold + UAC stage
     [switch]   $SkipBiosUpdate,      # skip BIOS staging + the reboot-to-UEFI hand-off
     [switch]   $SkipWindowsUpdateRun, # skip the run-WU-fully stage (post-BIOS)
+    [switch]   $SkipVerify,          # skip the stage-4 build verification gate
     [string]   $Repo,                # owner/name override (default below)
     [string]   $Branch = 'main'
 )
@@ -111,7 +112,10 @@ if (-not (Test-IsAdmin) -and -not $WhatIfPreference -and -not $Rehearse) {
     Write-Host "Elevation required; relaunching as administrator..."
     $fwd = Get-ForwardArgs -Bound $PSBoundParameters
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scriptPath) + $fwd
-    Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argList
+    # Quote spaced elements (e.g. a repo path under "C:\Users\John Doe\...") -
+    # Start-Process joins the array with spaces and adds no quoting of its own.
+    $argString = ($argList | ForEach-Object { if ($_ -match '\s') { '"{0}"' -f $_ } else { $_ } }) -join ' '
+    Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argString
     return
 }
 

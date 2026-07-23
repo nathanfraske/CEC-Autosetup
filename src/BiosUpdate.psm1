@@ -46,17 +46,22 @@ function Select-LatestBios {
     $candidates = @($Entries | Where-Object { -not (Test-BetaBios -Entry $_) })
     if ($candidates.Count -eq 0) { return $null }
 
+    # Only sort when every version shares ONE parseable format - mixing plain
+    # integers with dotted versions puts them on incomparable scales (e.g.
+    # '1.10' must not beat '2103'). Heterogeneous/unparseable lists trust the
+    # vendor's newest-first ordering.
     $parsed = @($candidates | ForEach-Object {
-        $core = ([string]$_.Version) -replace '[^\d.]', ''
-        $num = $null
-        if ($core -match '^\d+$') { $num = [int64]$core }
-        elseif ($core) { try { $num = [int64](([version]$core).Major * 1000000 + ([version]$core).Minor) } catch { } }
-        [pscustomobject]@{ Entry = $_; Num = $num }
+        $v = ([string]$_.Version).Trim()
+        $kind = 'other'; $num = $null
+        if ($v -match '^\d+$') { $kind = 'int'; $num = [int64]$v }
+        elseif ($v -match '^\d+(\.\d+)+$') { try { $num = [version]$v; $kind = 'dotted' } catch { } }
+        [pscustomobject]@{ Entry = $_; Kind = $kind; Num = $num }
     })
-    if (@($parsed | Where-Object { $null -eq $_.Num }).Count -eq 0) {
+    $kinds = @($parsed | Select-Object -ExpandProperty Kind -Unique)
+    if ($kinds.Count -eq 1 -and $kinds[0] -in 'int', 'dotted') {
         return ($parsed | Sort-Object Num -Descending | Select-Object -First 1).Entry
     }
-    return $candidates[0]   # unparseable version(s): vendor lists are newest-first
+    return $candidates[0]
 }
 
 function Find-FirmwareFile {
@@ -258,19 +263,55 @@ function Invoke-BiosStage {
     $result = [pscustomobject]@{ Status = $null; Detail = $null; RebootRequested = $false }
 
     $state = Get-FirstBootState
-    if ($state.PSObject.Properties['biosStage'] -and $state.biosStage.completed) {
-        Write-Log ("BIOS stage already completed on {0} (version {1}); skipping (delete {2} to redo)." -f `
-            $state.biosStage.when, $state.biosStage.version, (Get-FirstBootStatePath)) -Level Info
-        $result.Status = 'Skipped'; $result.Detail = 'state marker present'
-        return $result
+    if ($state.PSObject.Properties['biosStage']) {
+        if ($state.biosStage.completed) {
+            Write-Log ("BIOS stage already completed on {0} (version {1}); skipping (delete {2} to redo)." -f `
+                $state.biosStage.when, $state.biosStage.version, (Get-FirstBootStatePath)) -Level Info
+            $result.Status = 'Skipped'; $result.Detail = 'state marker present'
+            return $result
+        }
+        if ($state.biosStage.PSObject.Properties['stagedButNotRebooted'] -and $state.biosStage.stagedButNotRebooted) {
+            # Prior run staged the file but the automatic UEFI reboot failed and
+            # the operator was told to flash by hand. On re-run, assume they did
+            # - but say what the firmware reports so a skipped flash is visible.
+            $biosNow = 'unknown'
+            try { $biosNow = [string](Get-CimInstance -ClassName Win32_BIOS -ErrorAction Stop).SMBIOSBIOSVersion } catch { }
+            Write-Log ("BIOS was staged earlier ({0} -> {1}) without an automatic reboot; operator flash assumed. Firmware now reports: '{2}' - VERIFY this matches the staged version. Marking complete." -f `
+                $state.biosStage.version, $state.biosStage.stagedTo, $biosNow) -Level Warn
+            if (-not (Test-Rehearsal)) {
+                Set-FirstBootStateValue -Name 'biosStage' -Value @{
+                    completed = $true; version = [string]$state.biosStage.version
+                    stagedTo = [string]$state.biosStage.stagedTo
+                    when = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+                } | Out-Null
+            }
+            $result.Status = 'Skipped'; $result.Detail = "operator flash assumed (firmware reports '$biosNow')"
+            return $result
+        }
     }
 
-    # Connectivity: probe the board vendor's support host.
-    $vendorHost = $null
+    # Connectivity: probe the vendor's support host and/or the mirror host -
+    # when the mirror supplied the drivers there is no provider object, and the
+    # stage must not misreport a healthy mirror-fed bench as offline.
+    $probeHosts = @()
     if ($Provider) {
-        try { $vendorHost = ([uri](& $Provider.GetFallbackUrl $Identity $Board.Model)).Host } catch { }
+        try { $probeHosts += ([uri](& $Provider.GetFallbackUrl $Identity $Board.Model)).Host } catch { }
     }
-    $online = if ($vendorHost) { Test-HostReachable -TargetHost $vendorHost } else { $false }
+    if ($MirrorBase) {
+        try { $probeHosts += ([uri]$MirrorBase).Host } catch { }
+    }
+    $probeHosts = @($probeHosts | Where-Object { $_ } | Select-Object -Unique)
+    $online = $false
+    foreach ($h in $probeHosts) {
+        if (Test-HostReachable -TargetHost $h) { $online = $true; break }
+    }
+    if ($probeHosts.Count -eq 0) {
+        # Nothing to probe (no provider, no mirror): don't fabricate "offline";
+        # let the source-resolution steps below surface the real situation.
+        Write-Log 'No vendor/mirror host to probe; proceeding to BIOS source resolution.' -Level Debug
+        $online = $true
+    }
+    $vendorHost = if ($probeHosts.Count -gt 0) { $probeHosts[0] } else { $null }
     if (-not $online) {
         Write-Log "No route to the vendor ($(if ($vendorHost) { $vendorHost } else { 'unknown host' })); trying the offline LAN-driver fallback." -Level Warn
         $lan = Install-LanDriverFromRepo
@@ -327,16 +368,32 @@ function Invoke-BiosStage {
 
     try {
         $staged = Save-BiosPackage -Entry $entry
-        Set-FirstBootStateValue -Name 'biosStage' -Value @{
-            completed = $true
-            version   = [string]$entry.Version
-            stagedTo  = [string]$staged.StagedPath
-            when      = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-        } | Out-Null
         Write-Log ("BIOS {0} staged at: {1}" -f $entry.Version, $staged.StagedPath) -Level Success
         Write-Log 'OPERATOR: after the reboot, flash from UEFI (EZ Flash / Q-Flash / M-Flash / Instant Flash) using the staged file, then boot back into Windows and re-run - the pipeline continues from the drivers stage.' -Level Info
         $result.RebootRequested = Restart-ToFirmware
-        $result.Status = 'Staged'; $result.Detail = "$($entry.Version) -> $($staged.StagedPath)"
+        if ($result.RebootRequested) {
+            # Mark complete only once the UEFI reboot is actually scheduled.
+            Set-FirstBootStateValue -Name 'biosStage' -Value @{
+                completed = $true
+                version   = [string]$entry.Version
+                stagedTo  = [string]$staged.StagedPath
+                when      = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+            } | Out-Null
+            $result.Status = 'Staged'; $result.Detail = "$($entry.Version) -> $($staged.StagedPath)"
+        } else {
+            # shutdown /r /fw failed (legacy board / not honored): the run must
+            # NOT continue installing drivers on the old firmware. Record the
+            # staged-not-rebooted state; the operator flashes by hand and
+            # re-runs (the marker branch above then resumes the pipeline).
+            Set-FirstBootStateValue -Name 'biosStage' -Value @{
+                completed = $false; stagedButNotRebooted = $true
+                version   = [string]$entry.Version
+                stagedTo  = [string]$staged.StagedPath
+                when      = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+            } | Out-Null
+            Write-Log 'MANUAL STEP: automatic UEFI reboot failed. Reboot, enter setup (DEL/F2), flash the staged file, boot back into Windows, and re-run - the pipeline resumes from Windows Update.' -Level Warn
+            $result.Status = 'StagedManualReboot'; $result.Detail = "$($entry.Version) staged; UEFI reboot failed"
+        }
     } catch {
         Write-Log "BIOS staging failed: $($_.Exception.Message)" -Level Error
         $result.Status = 'Failed'; $result.Detail = $_.Exception.Message

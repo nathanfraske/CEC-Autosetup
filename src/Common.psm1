@@ -357,18 +357,22 @@ function Get-FirstBootState {
 function Set-FirstBootStateValue {
     <#
         .SYNOPSIS
-        Sets one top-level property on the state object and persists it. Callers
-        decide when a write is appropriate (rehearsal/-WhatIf paths do not call).
+        Sets one top-level property on the state object and persists it.
+        Honors -WhatIf: cross-boot state is REAL machine state, and a dry run
+        that wrote it would poison the next real run (e.g. a -WhatIf preview
+        pumping windowsUpdateRun.cycles to the max-cycle cap).
     #>
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory)][string] $Name,
         [Parameter(Mandatory)][AllowNull()] $Value
     )
     $state = Get-FirstBootState
-    $state | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force
-    ConvertTo-Json -InputObject $state -Depth 8 |
-        Set-Content -LiteralPath (Get-FirstBootStatePath) -Encoding UTF8 -WhatIf:$false
+    if ($PSCmdlet.ShouldProcess((Get-FirstBootStatePath), "set state '$Name'")) {
+        $state | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force
+        ConvertTo-Json -InputObject $state -Depth 8 |
+            Set-Content -LiteralPath (Get-FirstBootStatePath) -Encoding UTF8 -WhatIf:$false
+    }
     return $state
 }
 

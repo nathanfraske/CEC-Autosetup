@@ -35,7 +35,8 @@ param(
     [switch]   $RehearseDownloads,
     [switch]   $SkipWindowsPrep,
     [switch]   $SkipBiosUpdate,
-    [switch]   $SkipWindowsUpdateRun
+    [switch]   $SkipWindowsUpdateRun,
+    [switch]   $SkipVerify
 )
 
 $ErrorActionPreference = 'Stop'
@@ -56,6 +57,8 @@ Import-Module (Join-Path $here 'apps/AppCatalog.psm1') -Force
 Import-Module (Join-Path $here 'WindowsPrep.psm1') -Force
 Import-Module (Join-Path $here 'BiosUpdate.psm1') -Force
 Import-Module (Join-Path $here 'WindowsUpdateRun.psm1') -Force
+Import-Module (Join-Path $here 'DriverOrder.psm1') -Force
+Import-Module (Join-Path $here 'BuildVerification.psm1') -Force
 
 function Resolve-MsiBoardCode {
     # MSI boards may report an MS-xxxx code instead of the model name; map it via
@@ -262,8 +265,9 @@ if (-not $drivers) {
             } elseif ($identity) {
                 Add-LedgerEntry -Phase 'driver-list' -Outcome 'fallback' -Detail "$($provider.Name) is fallback-only (no headless list)"
             }
-            if ($drivers -and -not $mapEntry) {
-                # Self-heal the mapping cache after a successful headless resolve.
+            if ($drivers -and -not $mapEntry -and -not (Test-Rehearsal)) {
+                # Self-heal the mapping cache after a successful headless
+                # resolve (real runs only - rehearsal mutates nothing).
                 try {
                     $fb = & $provider.GetFallbackUrl $identity $resolveModel
                     Save-MappingEntry -Model $board.Model -Entry ([pscustomobject]@{
@@ -289,14 +293,22 @@ if ($SkipBiosUpdate) {
     $biosResult = Invoke-BiosStage -Board $board -Provider $provider -Identity $identity `
         -RawDrivers @($drivers) -MirrorBase $mirrorBase
     Add-LedgerEntry -Phase 'bios' -Outcome $(switch ($biosResult.Status) {
-            'Staged'    { 'ok' }
-            'Rehearsed' { 'ok' }
-            'Skipped'   { 'skipped' }
-            'Fallback'  { 'fallback' }
-            default     { 'blocked' }
+            'Staged'            { 'ok' }
+            'Rehearsed'         { 'ok' }
+            'Skipped'           { 'skipped' }
+            'Fallback'          { 'fallback' }
+            'StagedManualReboot' { 'fallback' }
+            default             { 'blocked' }
         }) -Detail "$($biosResult.Status): $($biosResult.Detail)"
     if ($biosResult.RebootRequested) {
         Write-Log 'BIOS staged; this run ends here. After flashing in UEFI, boot back into Windows and re-run - the pipeline resumes from Windows Update + drivers.' -Level Success
+        Write-Log "Done. Full transcript: $logPath" -Level Success
+        exit 0
+    }
+    if ($biosResult.Status -eq 'StagedManualReboot') {
+        # Do not install drivers on the old firmware; the operator flashes by
+        # hand and re-runs.
+        Write-Log 'Run stops here pending the manual BIOS flash (see MANUAL STEP above); re-run afterwards to continue.' -Level Warn
         Write-Log "Done. Full transcript: $logPath" -Level Success
         exit 0
     }
@@ -305,13 +317,20 @@ if ($SkipBiosUpdate) {
 # --- stage 2: Windows Update runs its FULL course (post-BIOS) --------------
 # WU gets all of its updates + generic drivers out of the way first; the
 # vendor drivers below then replace its defaults. Real runs exit at WU-driven
-# reboots and resume via RunOnce; rehearsal scans + reports without touching.
+# reboots and resume via the resume task; rehearsal scans + reports without touching.
 Set-LogPhase 'windows-update'
 if ($SkipWindowsUpdateRun) {
     Write-Log 'Windows Update stage skipped (-SkipWindowsUpdateRun).' -Level Info
     Add-LedgerEntry -Phase 'windows-update' -Outcome 'skipped' -Detail '-SkipWindowsUpdateRun'
 } else {
-    $wuResult = Invoke-WindowsUpdateStage
+    # Contained: a WUA COM failure must degrade this stage, not kill the run
+    # (the hold may already be released by this point).
+    $wuResult = $null
+    try { $wuResult = Invoke-WindowsUpdateStage }
+    catch {
+        Write-Log "Windows Update stage error: $($_.Exception.Message)" -Level Error
+        $wuResult = [pscustomobject]@{ Status = 'Blocked'; Detail = $_.Exception.Message; RebootRequested = $false }
+    }
     Add-LedgerEntry -Phase 'windows-update' -Outcome $(switch ($wuResult.Status) {
             'Completed'      { 'ok' }
             'Rehearsed'      { 'ok' }
@@ -320,7 +339,7 @@ if ($SkipWindowsUpdateRun) {
             default          { 'blocked' }
         }) -Detail "$($wuResult.Status): $($wuResult.Detail)"
     if ($wuResult.RebootRequested) {
-        Write-Log 'Restarting to continue Windows Update; the pipeline resumes automatically (RunOnce).' -Level Success
+        Write-Log 'Restarting to continue Windows Update; the pipeline resumes automatically (resume task).' -Level Success
         Write-Log "Done. Full transcript: $logPath" -Level Success
         exit 0
     }
@@ -333,26 +352,80 @@ if ($drivers) {
         -DenyDefault $settings.categories.denyDefault -IncludeBiosEntries:$IncludeBios
     Write-Log "Selected $(@($kept).Count) of $(@($drivers).Count) driver file(s) from $driverSource." -Level Info
 
+    # Stage 3: config-driven install order (docs/driver-install-order.md) with
+    # conditional skips and forced-restart boundaries (resume-task resume).
+    $platform = Get-PlatformKind
+    $orderConditions = Get-DriverOrderConditions
+    $plan = Get-DriverOrderPlan -Drivers @($kept) -Platform $platform -Conditions $orderConditions
+    $planTxt = Format-DriverOrderPlan -Plan $plan
+    Write-Log ("Install order ({0}): {1}" -f $platform, $planTxt) -Level Info -Data @{
+        platform = $platform; conditions = $orderConditions
+    }
+
+    $doneGroups = @()
+    $st = Get-FirstBootState
+    if ($st.PSObject.Properties['driverOrder'] -and $st.driverOrder.PSObject.Properties['completedGroups']) {
+        $doneGroups = @($st.driverOrder.completedGroups)
+    }
+
     $idx = 0
     $tot = @($kept).Count
-    foreach ($entry in $kept) {
-        $idx++
-        Write-Progress -Id 0 -Activity "$(Get-AppName): installing drivers" `
-            -Status "[$idx/$tot] $($entry.Category) - $($entry.Name)" `
-            -PercentComplete ([int](($idx / [Math]::Max(1, $tot)) * 100))
-        if ([string]$entry.Category -match '(?i)bios|firmware') {
-            Write-Log "BIOS listed (NOT flashed): $($entry.Name) $($entry.Version)" -Level Warn
-            $driverResults.Add([pscustomobject]@{ Name = $entry.Name; Category = $entry.Category; Version = $entry.Version; Method = 'bios'; Status = 'ListedOnly'; Detail = $entry.Url }) | Out-Null
+    $rebootAtBoundary = $false
+    foreach ($group in $plan) {
+        if ($group.Entries.Count -eq 0) { continue }
+
+        if ($group.Skipped) {
+            foreach ($entry in $group.Entries) {
+                Write-Log ("SKIP by order rule [{0}]: {1} ({2})" -f $group.Key, $entry.Name, $group.SkipReason) -Level Info
+                $driverResults.Add([pscustomobject]@{ Name = $entry.Name; Category = $entry.Category; Version = $entry.Version; Method = 'order-rule'; Status = 'SkippedByRule'; Detail = $group.SkipReason }) | Out-Null
+            }
             continue
         }
-        $r = Install-DriverPackage -Entry $entry
-        $driverResults.Add($r) | Out-Null
+        if ($doneGroups -contains $group.Key) {
+            Write-Log ("Group '{0}' completed on a previous boot; skipping {1} entr(ies)." -f $group.Key, $group.Entries.Count) -Level Info
+            continue
+        }
+
+        Write-Log ("--- install group '{0}' ({1}): {2} entr(ies){3} ---" -f $group.Key, $group.Title, $group.Entries.Count, $(if ($group.RestartAfter) { ' [RESTART after]' } else { '' })) -Level Info
+        $installedInGroup = $false
+        foreach ($entry in $group.Entries) {
+            $idx++
+            Write-Progress -Id 0 -Activity "$(Get-AppName): installing drivers" `
+                -Status "[$idx/$tot] [$($group.Key)] $($entry.Category) - $($entry.Name)" `
+                -PercentComplete ([int](($idx / [Math]::Max(1, $tot)) * 100))
+            if ([string]$entry.Category -match '(?i)bios|firmware') {
+                Write-Log "BIOS listed (NOT flashed): $($entry.Name) $($entry.Version)" -Level Warn
+                $driverResults.Add([pscustomobject]@{ Name = $entry.Name; Category = $entry.Category; Version = $entry.Version; Method = 'bios'; Status = 'ListedOnly'; Detail = $entry.Url }) | Out-Null
+                continue
+            }
+            $r = Install-DriverPackage -Entry $entry
+            $driverResults.Add($r) | Out-Null
+            if ($r.Status -eq 'Installed') { $installedInGroup = $true }
+        }
+
+        if (-not (Test-Rehearsal) -and -not $dryRun) {
+            $doneGroups = @($doneGroups + $group.Key)
+            Set-FirstBootStateValue -Name 'driverOrder' -Value @{ completedGroups = $doneGroups } | Out-Null
+        }
+        if ($group.RestartAfter -and $installedInGroup -and -not (Test-Rehearsal) -and -not $dryRun) {
+            Register-ResumeAfterReboot
+            if (Restart-ForDriverPhase) { $rebootAtBoundary = $true; break }
+        }
+        elseif ($group.RestartAfter -and (Test-Rehearsal)) {
+            Write-Log ("REHEARSE: [RESTART] boundary after group '{0}' (real runs reboot + resume here)." -f $group.Key) -Level Info
+        }
     }
     Write-Progress -Id 0 -Activity "$(Get-AppName): installing drivers" -Completed
 
     $byStatus = @($driverResults | Group-Object Status | ForEach-Object { "$($_.Count) $($_.Name)" }) -join ', '
     Add-LedgerEntry -Phase 'drivers' -Outcome $(if (@($driverResults | Where-Object { $_.Status -in 'Failed', 'Blocked', 'HashFailed' }).Count -eq 0) { 'ok' } else { 'degraded' }) `
-        -Detail $byStatus
+        -Detail ("{0} | order: {1}" -f $byStatus, $planTxt)
+
+    if ($rebootAtBoundary) {
+        Write-Log 'Restarting at a driver-order boundary; the pipeline resumes automatically (resume task).' -Level Success
+        Write-Log "Done. Full transcript: $logPath" -Level Success
+        exit 0
+    }
 }
 
 # 4) Chrome fallback when neither mirror nor vendor produced drivers.
@@ -478,6 +551,21 @@ if ($SkipTweaks) {
     }
 }
 
+# --- stage 4: build verification (the pass/fail gate) ---------------------
+Set-LogPhase 'verify'
+if ($SkipVerify) {
+    Write-Log 'Build verification skipped (-SkipVerify).' -Level Info
+    Add-LedgerEntry -Phase 'verify' -Outcome 'skipped' -Detail '-SkipVerify'
+} else {
+    $verify = Invoke-BuildVerification
+    Add-LedgerEntry -Phase 'verify' -Outcome $(switch ($verify.Status) {
+            'Pass'     { 'ok' }
+            'Skipped'  { 'ok' }
+            'Degraded' { 'degraded' }
+            default    { 'blocked' }
+        }) -Detail "$($verify.Status): $($verify.Detail)"
+}
+
 # --- summary -------------------------------------------------------------
 Set-LogPhase 'summary'
 Write-Log "-------------------- summary --------------------" -Level Info
@@ -519,6 +607,12 @@ if (Test-Rehearsal) {
     }
     ConvertTo-Json -InputObject $report -Depth 8 | Set-Content -LiteralPath $reportPath -Encoding UTF8 -WhatIf:$false
     Write-Log "Rehearsal report (portable JSON, collect these across machines): $reportPath" -Level Success
+}
+
+# Pipeline reached the end on this boot: retire the resume task (no-op when
+# absent; rehearsal/dry runs never registered one).
+if (-not (Test-Rehearsal) -and -not $dryRun) {
+    try { Remove-ResumeAfterReboot } catch { }
 }
 
 Write-Log "Done. Full transcript: $logPath" -Level Success

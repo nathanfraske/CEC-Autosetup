@@ -33,11 +33,11 @@ caveats.** The order stays; three mechanics change (all reflected in the code).
 | ~~Disable the services~~ | ~~`Set-Service Disabled`~~ | **Rejected** — unsupported; WaaSMedic re-enables them on its own schedule = the exact nondeterminism the hold exists to remove |
 | ~~SearchOrderConfig=0~~ | ~~PnP device-installation knob~~ | **Rejected** — blunter than needed; the policy pair already excludes driver offers |
 | Release (post-BIOS stage) | **Delete** the two values (never leave `=0` — ship policy-clean); restart services | Implemented (`Restore-WindowsUpdate`) |
-| Run WU fully | WUA COM API directly (`Microsoft.Update.Session` search → download → install; in-box, zero deps) looping with RunOnce-resumed reboots until clean — implemented in `WindowsUpdateRun.psm1` (max-cycle guard, state marker) | **Implemented** (stage 2) |
+| Run WU fully | WUA COM API directly (`Microsoft.Update.Session` search → download → install; in-box, zero deps) looping with resume-task-resumed reboots until clean — implemented in `WindowsUpdateRun.psm1` (max-cycle guard, state marker) | **Implemented** (stage 2) |
 | "Fully done" test | BOTH: a fresh WUA scan returns zero applicable non-hidden updates AND no pending reboot (CBS `RebootPending`, WU `RebootRequired`, `PendingFileRenameOperations` all clear) | **Implemented** (`Get-PendingRebootStatus` + scan loop) |
 | ~~UsoClient~~ | ~~`StartScan/StartDownload/StartInstall`~~ | **Rejected** — undocumented, internal-only per Microsoft |
 | Vendor drivers | Ordered install per [`driver-install-order.md`](driver-install-order.md), WU idle | next slices |
-| Verification pass | One final WU scan: expect zero driver offers; if one appears, **hide that specific update** (PSWindowsUpdate `Hide-WindowsUpdate` / wushowhide) and record the SKU — never blanket-block; finish with `pnputil /enum-devices /problem` audit | **next slice** |
+| Verification pass | One final WU scan: expect zero driver offers; any re-offer is **hidden per-update** via WUA `IsHidden` and recorded — never blanket-blocked; plus the problem-device audit + pending-reboot check | **Implemented** (stage 4, `BuildVerification.psm1`) |
 
 Also worth knowing: OOBE's zero-day-patch updates cannot be opted out once
 OOBE has network, and WU does no background work until first sign-in —

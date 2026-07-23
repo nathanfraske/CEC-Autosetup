@@ -98,6 +98,7 @@ See [`docs/autounattend.md`](docs/autounattend.md) to wire this into
 | `-SkipWindowsPrep` | Skip [stage 1a](docs/bios-stage.md): the temporary Windows Update hold + UAC disable. |
 | `-SkipBiosUpdate` | Skip [stage 1b](docs/bios-stage.md): BIOS staging + the reboot-to-UEFI hand-off. |
 | `-SkipWindowsUpdateRun` | Skip [stage 2](docs/windows-update-strategy.md): the run-Windows-Update-fully pass that precedes vendor drivers. |
+| `-SkipVerify` | Skip [stage 4](docs/windows-update-strategy.md): the build gate (WU driver re-offer guard + zero-splat Device Manager audit). |
 | `-WhatIf` | Dry run. Plans everything, installs nothing. |
 | `-IncludeBios` | List BIOS entries. **Never flashes** — listing only. |
 | `-Categories a,b` | Explicit category allow-list (default: skip pure utilities). |
@@ -266,6 +267,7 @@ check how far the stack gets on any given machine, run the
 - [`docs/bios-stage.md`](docs/bios-stage.md) — stage 1: WU hold + UAC, latest non-beta BIOS staging, reboot-to-UEFI hand-off (the tool never flashes), offline fallbacks.
 - [`docs/driver-install-order.md`](docs/driver-install-order.md) — researched install-order spec (chipset → platform → LAN/BT/Wi-Fi → GPU → audio, restart points, skip rules) for the upcoming ordered pipeline.
 - [`docs/windows-update-strategy.md`](docs/windows-update-strategy.md) — researched WU strategy: hold mechanics, run-WU-fully-then-vendor-drivers validation, completion detection, ship policy.
+- [`docs/allmystuff-networking.md`](docs/allmystuff-networking.md) — **design proposal**: shop networking over AllMyStuff (mesh control plane: presence/remote-hands/reports; HTTP mirror stays the data plane), stage-1b install, enrollment, phases, open questions.
 - [`docs/rehearsal.md`](docs/rehearsal.md) — the readiness self-check: what's real vs. emulated, log/report artifacts, cross-machine collection.
 - [`docs/architecture.md`](docs/architecture.md) — data flow, provider contract, fallback flow, apps layer.
 - [`docs/vendor-contracts.md`](docs/vendor-contracts.md) — the live vendor contracts, dated, with a "this is undocumented and may change" banner, plus open items.

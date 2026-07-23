@@ -32,14 +32,15 @@ No elevation is required (or requested) for a rehearsal.
 | detect | CIM board/GPU/peripheral detection | — |
 | mapping | mapping-table lookup + MS-code resolution | — |
 | bios | vendor-host reachability, BIOS pick (non-beta latest), BIOS URL probe | download/extract/staging, state marker, `shutdown /r /fw` (exact command logged) |
-| windows-update | live WUA scan (real offer count + titles, driver-class count), pending-reboot indicators | hold release, installs, RunOnce resume, reboots |
+| windows-update | live WUA scan (real offer count + titles, driver-class count), pending-reboot indicators | hold release, installs, resume-task resume, reboots |
 | mirror | mirror index fetch + board lookup (when configured) | file pulls |
 | vendor | live provider resolve + driver-list API calls | — |
-| drivers | per-file URL **probe** (HEAD, ranged-GET fallback: status + size); with `-RehearseDownloads` also real download, hash verify, extraction, .inf enumeration, packer detection | `pnputil` / silent EXE / `msiexec` execution — the **exact command line is logged** instead |
+| drivers | ordered plan computed against real platform/conditions (printed with `[RESTART]` markers + skip rules); per-file URL **probe** (HEAD, ranged-GET fallback: status + size); with `-RehearseDownloads` also real download, hash verify, extraction, .inf enumeration, packer detection | `pnputil` / silent EXE / `msiexec` execution — the **exact command line is logged** instead; boundary reboots |
 | gpu | NVIDIA headless lookup (real API), installer URL probe | silent install (exact command logged) |
 | apps | catalog matching against real hardware, winget presence check, fallback-page probe | `winget install` (exact command logged), browser opening |
 | tweaks | associations + taskbar XMLs **rendered** into the rehearsal area | dism import, registry writes, wallpaper broadcast (exact keys/values logged) |
 | fallback | fallback URL construction | Chrome install + page opening |
+| verify | live WU re-offer scan, real problem-device audit, pending-reboot check | hiding driver offers (would-hide logged), state marker |
 
 Rules of thumb: reads and renders are real, side effects are logged. The only
 writes a rehearsal performs are its own logs/artifacts under
