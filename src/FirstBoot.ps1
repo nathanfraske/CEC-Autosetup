@@ -373,8 +373,8 @@ if ($SkipWindowsUpdateRun) {
 }
 
 # 3) Install whatever the source produced (mirror or vendor share this path).
-Enter-Stage 'drivers' 7
 if ($drivers) {
+    Enter-Stage 'drivers' 7
     $kept = Select-Drivers -Drivers $drivers -AllowCategories $Categories `
         -DenyDefault $settings.categories.denyDefault -IncludeBiosEntries:$IncludeBios
     Write-Log "Selected $(@($kept).Count) of $(@($drivers).Count) driver file(s) from $driverSource." -Level Info
@@ -464,8 +464,8 @@ if ($drivers) {
 }
 
 # 4) Chrome fallback when neither mirror nor vendor produced drivers.
-Enter-Stage 'fallback' 7
 if (-not $drivers) {
+    Enter-Stage 'fallback' 7
     $fallbackUrl = $null
     if ($mapEntry -and $mapEntry.downloadPage) { $fallbackUrl = [string]$mapEntry.downloadPage }
     elseif ($provider) { $fallbackUrl = & $provider.GetFallbackUrl $identity $resolveModel }
