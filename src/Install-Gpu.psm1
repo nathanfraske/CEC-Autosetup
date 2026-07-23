@@ -162,6 +162,24 @@ function Install-GpuVendorDriver {
     if (-not $SilentArgs) { $SilentArgs = Get-GpuSilentArgs -Vendor $Vendor }
     $result = [pscustomobject]@{ Vendor = $Vendor; Gpu = "$Vendor GPU driver"; Version = ''; Method = "gpu-driver:$Vendor"; Status = $null; Detail = $null }
 
+    if (Test-Rehearsal) {
+        $probe = Invoke-HttpProbe -Url $InstallerUrl
+        $file = [IO.Path]::GetFileName(($InstallerUrl -split '\?')[0])
+        if ($probe.Ok) {
+            $sizeTxt = if ($probe.SizeBytes) { '{0:N1} MB' -f ($probe.SizeBytes / 1MB) } else { 'size unknown' }
+            Write-Log ("REHEARSE: {0} GPU driver reachable (HTTP {1}, {2}); would run: ""<work>\{3}"" {4}" -f `
+                $Vendor, $probe.StatusCode, $sizeTxt, $file, $SilentArgs) -Level Info -Data @{
+                vendor = $Vendor; url = $InstallerUrl; statusCode = $probe.StatusCode
+                sizeBytes = $probe.SizeBytes; command = "`"<work>\$file`" $SilentArgs"
+            }
+            $result.Status = 'Rehearsed'; $result.Detail = "HTTP $($probe.StatusCode), $sizeTxt"
+        } else {
+            Write-Log ("REHEARSE: {0} GPU installer unreachable: {1} :: {2}" -f $Vendor, $InstallerUrl, $probe.Error) -Level Warn
+            $result.Status = 'Blocked'; $result.Detail = "probe failed: $($probe.Error)"
+        }
+        return $result
+    }
+
     if (-not $PSCmdlet.ShouldProcess($Vendor, "download + silent-install GPU driver ($SilentArgs)")) {
         Write-Log "PLAN: $Vendor GPU driver <- $InstallerUrl (silent: $SilentArgs)" -Level Info
         $result.Status = 'WhatIf'; return $result
@@ -202,6 +220,26 @@ function Install-NvidiaDriver {
 
     if (-not $info) { $result.Status = 'NotResolved'; $result.Detail = 'no headless match; NVIDIA App will fetch the driver'; return $result }
     $result.Version = $info.Version
+
+    if (Test-Rehearsal) {
+        $nvArgs = [string](Get-Settings).nvidia.silentArgs
+        $probe = Invoke-HttpProbe -Url $info.Url
+        $file = [IO.Path]::GetFileName(($info.Url -split '\?')[0])
+        if ($probe.Ok) {
+            $sizeTxt = if ($probe.SizeBytes) { '{0:N1} MB' -f ($probe.SizeBytes / 1MB) } else { 'size unknown' }
+            Write-Log ("REHEARSE: NVIDIA {0} reachable (HTTP {1}, {2}); would run: ""<work>\{3}"" {4}" -f `
+                $info.Version, $probe.StatusCode, $sizeTxt, $file, $nvArgs) -Level Info -Data @{
+                gpu = $GpuName; version = [string]$info.Version; url = [string]$info.Url
+                statusCode = $probe.StatusCode; sizeBytes = $probe.SizeBytes
+                command = "`"<work>\$file`" $nvArgs"
+            }
+            $result.Status = 'Rehearsed'; $result.Detail = "HTTP $($probe.StatusCode), $sizeTxt"
+        } else {
+            Write-Log ("REHEARSE: NVIDIA installer unreachable: {0} :: {1}" -f $info.Url, $probe.Error) -Level Warn
+            $result.Status = 'Blocked'; $result.Detail = "probe failed: $($probe.Error)"
+        }
+        return $result
+    }
 
     if (-not $PSCmdlet.ShouldProcess($GpuName, "download + silent-install NVIDIA $($info.Version)")) {
         Write-Log "PLAN: install NVIDIA driver $($info.Version) for '$GpuName' <- $($info.Url)" -Level Info

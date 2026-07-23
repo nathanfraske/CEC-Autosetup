@@ -2,7 +2,7 @@
 
 # Contributing
 
-Thanks for helping improve CEC-Autosetep.
+Thanks for helping improve CEC-Autosetup.
 
 ## Ground rules
 
@@ -25,6 +25,11 @@ Thanks for helping improve CEC-Autosetep.
 
 ## Workflow
 
+0. Fresh machine? Provision the dev tooling once (Pester 5.5+, PSScriptAnalyzer;
+   CurrentUser scope):
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File tools/Initialize-DevEnvironment.ps1
+   ```
 1. Branch from `main`.
 2. Make the change. Keep parsing separate from fetching, and hide
    platform-specific calls behind thin, mockable wrappers.
@@ -47,3 +52,8 @@ Thanks for helping improve CEC-Autosetep.
 Live vendor calls are for local dev and manual smoke tests only — never in the
 offline CI suite. When you re-capture a vendor response, update the matching
 fixture and the capture date in `docs/vendor-contracts.md`.
+
+For an end-to-end check on real hardware, use the
+[rehearsal self-check](docs/rehearsal.md) (`bootstrap.ps1 -Rehearse`): it
+exercises detection, the live vendor contracts and every install decision with
+super-verbose logging, and installs nothing.

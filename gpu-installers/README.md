@@ -4,7 +4,7 @@
 
 AMD and Intel have **no clean headless driver-lookup API** (their download sites
 are bot-walled), so to make their GPU drivers fully unattended you **supply the
-installer once** and CEC-Autosetep silent-installs it.
+installer once** and CEC-Autosetup silent-installs it.
 
 Drop the latest vendor installer here:
 

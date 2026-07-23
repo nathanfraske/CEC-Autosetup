@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-# CEC-Autosetep driver-library refresh (oneshot). Regenerates the catalog mapping
+# CEC-Autosetup driver-library refresh (oneshot). Regenerates the catalog mapping
 # and re-pulls current + last-gen drivers into the served library. Paired with
 # cec-driver-library-build.timer. See docs/driver-library.md.
 
 [Unit]
-Description=CEC-Autosetep driver library refresh (mapping + current/last-gen pull)
+Description=CEC-Autosetup driver library refresh (mapping + current/last-gen pull)
 After=network-online.target
 Wants=network-online.target
 
@@ -12,7 +12,7 @@ Wants=network-online.target
 Type=oneshot
 User=cec
 Group=cec
-Environment=CEC_HOME=/opt/cec-autosetep
+Environment=CEC_HOME=/opt/cec-autosetup
 Environment=CEC_LIBRARY=/srv/cec-drivers
 # Refresh the ASUS + Gigabyte catalog rows, then pull current + last-gen drivers.
 ExecStart=/usr/bin/pwsh -NoProfile -File ${CEC_HOME}/tools/Build-AsusMapping.ps1

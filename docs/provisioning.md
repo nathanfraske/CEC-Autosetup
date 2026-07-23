@@ -48,7 +48,7 @@ profiles rather than mutating an existing signed-in session:
   `C:\Users\Default\...\Shell\LayoutModification.xml`. `PinListPlacement="Replace"`
   gives a clean, known taskbar (edit `New-TaskbarLayoutXml` to extend the set).
 
-Running CEC-Autosetep from `SetupComplete.cmd` (pre-OOBE) gives both of these the
+Running CEC-Autosetup from `SetupComplete.cmd` (pre-OOBE) gives both of these the
 best chance to "stick." `disableOneDriveStartup`, `disableCopilot`, and the
 wallpaper apply to the current user immediately.
 
@@ -64,7 +64,7 @@ A small framework: a tier name → image, selected at first boot.
    USB so it works offline).
 3. Select the tier at first boot (case-insensitive):
    ```
-   powershell -NoProfile -ExecutionPolicy Bypass -File X:\CEC-Autosetep\bootstrap.ps1 -Tier Dreadnought
+   powershell -NoProfile -ExecutionPolicy Bypass -File X:\CEC-Autosetup\bootstrap.ps1 -Tier Dreadnought
    ```
    With no `-Tier`, `wallpaper.defaultTier` in `tweaks.json` is used; if neither is
    set or the image is missing, the wallpaper step is skipped (warned, not fatal).

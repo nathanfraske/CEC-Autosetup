@@ -2,7 +2,7 @@
 
 # Adding a board vendor (provider)
 
-A provider teaches CEC-Autosetep how to fetch drivers for one motherboard vendor.
+A provider teaches CEC-Autosetup how to fetch drivers for one motherboard vendor.
 Providers are vendor-agnostic to the orchestrator: each exports a factory that
 returns a provider object with a fixed shape.
 

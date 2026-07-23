@@ -92,7 +92,9 @@ function Get-PackerType {
         return 'Unknown'
     }
 
-    $text = [Text.Encoding]::Latin1.GetString($bytes)
+    # 28591 = ISO-8859-1; the [Text.Encoding]::Latin1 shortcut is .NET 5+ only
+    # and does not exist on Windows PowerShell 5.1 (.NET Framework).
+    $text = [Text.Encoding]::GetEncoding(28591).GetString($bytes)
     if ($text -match 'Inno Setup')    { return 'Inno' }
     if ($text -match 'Nullsoft')      { return 'NSIS' }
     if ($text -match 'InstallShield') { return 'InstallShield' }
@@ -195,6 +197,10 @@ function Install-DriverPackage {
         Detail   = $null
     }
 
+    if (Test-Rehearsal) {
+        return (Invoke-DriverPackageRehearsal -Result $result -Entry $Entry)
+    }
+
     if (-not $PSCmdlet.ShouldProcess($Entry.Name, "download + install from $($Entry.Url)")) {
         Write-Log ("PLAN: install [{0}] {1} {2} <- {3}" -f $Entry.Category, $Entry.Name, $Entry.Version, $Entry.Url) -Level Info
         $result.Status = 'WhatIf'
@@ -265,6 +271,151 @@ function Install-DriverPackage {
     return $result
 }
 
+function Invoke-DriverPackageRehearsal {
+    <#
+        .SYNOPSIS
+        Rehearses one driver entry true-to-life without installing anything.
+        Default: probes the URL (reachability + size) and logs the exact
+        pipeline a real run would execute. With rehearsal downloads enabled it
+        really downloads, hash-verifies, extracts, enumerates .infs and detects
+        the EXE packer - then logs the exact install command instead of running it.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] $Result,
+        [Parameter(Mandatory)] $Entry
+    )
+
+    $fileName = [IO.Path]::GetFileName(($Entry.Url -split '\?')[0])
+    if ([string]::IsNullOrWhiteSpace($fileName)) { $fileName = ($Entry.Name -replace '[^\w.-]', '_') + '.bin' }
+    $ext = [IO.Path]::GetExtension($fileName).ToLowerInvariant()
+
+    $hash = ''
+    $hashAlg = ''
+    if ($Entry.PSObject.Properties['Hash'])    { $hash    = [string]$Entry.Hash }
+    if ($Entry.PSObject.Properties['HashAlg']) { $hashAlg = [string]$Entry.HashAlg }
+
+    Write-Log ("REHEARSE driver [{0}] {1} {2}" -f $Entry.Category, $Entry.Name, $Entry.Version) -Level Info
+    Write-Log 'entry detail' -Level Trace -Data @{
+        url = [string]$Entry.Url; file = $fileName; ext = $ext; hash = $hash; hashAlg = $hashAlg
+    }
+
+    if (-not (Test-RehearsalDownloads)) {
+        $probe = Invoke-HttpProbe -Url $Entry.Url
+        if (-not $probe.Ok) {
+            Write-Log ("REHEARSE: source unreachable: {0} :: {1}" -f $Entry.Url, $probe.Error) -Level Warn -Data @{
+                url = [string]$Entry.Url; error = [string]$probe.Error
+            }
+            $Result.Status = 'Blocked'; $Result.Method = 'rehearse:probe'
+            $Result.Detail = "probe failed: $($probe.Error)"
+            return $Result
+        }
+
+        $sizeTxt = if ($probe.SizeBytes) { '{0:N1} MB' -f ($probe.SizeBytes / 1MB) } else { 'size unknown' }
+        $next = switch ($ext) {
+            '.zip' { 'extract, then pnputil /add-driver <extracted>\*.inf /subdirs /install (or the largest EXE with packer-specific silent args)' }
+            '.exe' { 'detect packer, then run silently with the packer-specific switch' }
+            '.msi' { 'msiexec /i "<file>" /qn /norestart' }
+            default { "unhandled extension '$ext' -> NeedsManual" }
+        }
+        Write-Log ("REHEARSE: reachable (HTTP {0}, {1}, via {2}); would download to <work>\{3}, verify {4}, then {5}" -f `
+            $probe.StatusCode, $sizeTxt, $probe.Via, $fileName, $(if ($hash) { $hashAlg } else { 'nothing (no hash supplied)' }), $next) -Level Info -Data @{
+            statusCode = $probe.StatusCode; sizeBytes = $probe.SizeBytes; via = [string]$probe.Via
+            finalUrl = [string]$probe.FinalUrl; nextStep = $next
+        }
+        $Result.Status = 'Rehearsed'; $Result.Method = 'rehearse:probe'
+        $Result.Detail = "HTTP $($probe.StatusCode), $sizeTxt"
+        return $Result
+    }
+
+    # Full-fidelity rehearsal: real download + extraction into the rehearsal
+    # staging area. Everything except the final install commands.
+    $workDir = Join-Path (Get-RehearsalDirectory) 'drivers'
+    if (-not (Test-Path -LiteralPath $workDir)) { New-Item -ItemType Directory -Path $workDir -Force -WhatIf:$false | Out-Null }
+    $dest = Join-Path $workDir $fileName
+
+    try {
+        Write-Log "REHEARSE: downloading $($Entry.Name) for inspection..." -Level Info
+        Save-Download -Url $Entry.Url -Destination $dest -Activity "Rehearsing $($Entry.Category): $($Entry.Name)" | Out-Null
+    } catch {
+        Write-Log "REHEARSE: download failed: $($_.Exception.Message)" -Level Warn
+        $Result.Status = 'Blocked'; $Result.Method = 'rehearse:download'; $Result.Detail = $_.Exception.Message
+        return $Result
+    }
+
+    $verified = Test-FileHash -Path $dest -ExpectedHash $hash -Algorithm $(if ($hashAlg) { $hashAlg } else { 'SHA256' })
+    Write-Log ("REHEARSE: downloaded {0:N1} MB; hash verified: {1}" -f ((Get-Item -LiteralPath $dest).Length / 1MB), $verified) -Level Trace -Data @{
+        sizeBytes = (Get-Item -LiteralPath $dest).Length; hashVerified = [bool]$verified
+    }
+    if (-not $verified) {
+        $Result.Status = 'HashFailed'; $Result.Method = 'rehearse:verify'
+        $Result.Detail = "expected $hashAlg $hash"
+        return $Result
+    }
+
+    if ($ext -eq '.zip') {
+        $extractDir = Expand-DriverArchive -Path $dest -WhatIf:$false
+        $infs = @(Get-ChildItem -LiteralPath $extractDir -Recurse -Filter *.inf -ErrorAction SilentlyContinue)
+        if ($infs.Count -gt 0) {
+            $pattern = Join-Path $extractDir '*.inf'
+            Write-Log ("REHEARSE: {0} .inf file(s); would run: pnputil.exe /add-driver ""{1}"" /subdirs /install" -f $infs.Count, $pattern) -Level Info -Data @{
+                infCount = $infs.Count; command = "pnputil.exe /add-driver `"$pattern`" /subdirs /install"
+            }
+            $Result.Status = 'Rehearsed'; $Result.Method = 'rehearse:pnputil'
+            $Result.Detail = "$($infs.Count) .inf"
+            return $Result
+        }
+        $exe = @(Get-ChildItem -LiteralPath $extractDir -Recurse -Filter *.exe -ErrorAction SilentlyContinue |
+                 Sort-Object Length -Descending | Select-Object -First 1)
+        if ($exe.Count -gt 0) {
+            return (Invoke-ExeRehearsal -Result $Result -ExePath $exe[0].FullName)
+        }
+        Write-Log 'REHEARSE: archive has no .inf or .exe; a real run would flag NeedsManual.' -Level Warn
+        $Result.Status = 'Rehearsed'; $Result.Method = 'rehearse:manual'; $Result.Detail = 'archive had no .inf/.exe'
+        return $Result
+    }
+    elseif ($ext -eq '.exe') {
+        return (Invoke-ExeRehearsal -Result $Result -ExePath $dest)
+    }
+    elseif ($ext -eq '.msi') {
+        Write-Log ("REHEARSE: would run: msiexec.exe /i ""{0}"" /qn /norestart" -f $dest) -Level Info -Data @{
+            command = "msiexec.exe /i `"$dest`" /qn /norestart"
+        }
+        $Result.Status = 'Rehearsed'; $Result.Method = 'rehearse:msiexec'; $Result.Detail = 'msi'
+        return $Result
+    }
+
+    Write-Log "REHEARSE: unhandled file type '$ext'; a real run would flag NeedsManual." -Level Warn
+    $Result.Status = 'Rehearsed'; $Result.Method = 'rehearse:manual'; $Result.Detail = "unhandled extension $ext"
+    return $Result
+}
+
+function Invoke-ExeRehearsal {
+    <#
+        .SYNOPSIS
+        Rehearses the EXE-install branch: real packer detection on the real
+        binary, then logs the exact silent command instead of running it.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] $Result,
+        [Parameter(Mandatory)][string] $ExePath
+    )
+    $packer = Get-PackerType -Path $ExePath
+    $silentArgs = Get-SilentArgs -PackerType $packer
+    $Result.Method = "rehearse:exe:$packer"
+    if (-not $silentArgs) {
+        Write-Log ("REHEARSE: packer for {0} is Unknown; a real run would NOT auto-run it (NeedsManual)." -f (Split-Path -Leaf $ExePath)) -Level Warn
+        $Result.Status = 'Rehearsed'; $Result.Detail = 'unknown packer; no safe silent switch'
+        return $Result
+    }
+    Write-Log ("REHEARSE: packer {0}; would run: ""{1}"" {2}" -f $packer, $ExePath, $silentArgs) -Level Info -Data @{
+        packer = $packer; command = "`"$ExePath`" $silentArgs"
+    }
+    $Result.Status = 'Rehearsed'; $Result.Detail = "exe:$packer $silentArgs"
+    return $Result
+}
+
 function Install-ExeEntry {
     <#
         .SYNOPSIS
@@ -297,4 +448,5 @@ function Install-ExeEntry {
 
 Export-ModuleMember -Function `
     Save-Download, Get-PackerType, Get-SilentArgs, Expand-DriverArchive, `
-    Invoke-Pnputil, Invoke-ExeInstaller, Install-DriverPackage, Install-ExeEntry
+    Invoke-Pnputil, Invoke-ExeInstaller, Install-DriverPackage, Install-ExeEntry, `
+    Invoke-DriverPackageRehearsal, Invoke-ExeRehearsal

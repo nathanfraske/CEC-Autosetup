@@ -13,7 +13,7 @@ in that file:
 At first boot, pass the tier to apply its wallpaper (case-insensitive):
 
 ```
-powershell -NoProfile -ExecutionPolicy Bypass -File X:\CEC-Autosetep\bootstrap.ps1 -Tier Dreadnought
+powershell -NoProfile -ExecutionPolicy Bypass -File X:\CEC-Autosetup\bootstrap.ps1 -Tier Dreadnought
 ```
 
 If no `-Tier` is given, `wallpaper.defaultTier` in `config/tweaks.json` is used

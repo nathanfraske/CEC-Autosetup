@@ -7,6 +7,11 @@
 #
 # Flags:
 #   -WhatIf            dry run; plans everything, installs nothing
+#   -Rehearse          dev dry run; emulates the full stack true-to-life (probes
+#                      URLs, renders artifacts, logs exact commands + a JSON
+#                      report), installs nothing
+#   -RehearseDownloads with -Rehearse: really download + extract + packer-detect
+#                      (files only) for maximum fidelity
 #   -IncludeBios       list BIOS entries (never flashes - listing only)
 #   -Categories <[]>   explicit category allow-list (default: skip utilities)
 #   -Osid <int>        ASUS osid override (default: probe candidates)
@@ -25,7 +30,12 @@ param(
     [string[]] $InstallApps,
     [string]   $Mirror,
     [string]   $Model,
-    [string]   $Vendor
+    [string]   $Vendor,
+    [switch]   $Rehearse,
+    [switch]   $RehearseDownloads,
+    [switch]   $SkipWindowsPrep,
+    [switch]   $SkipBiosUpdate,
+    [switch]   $SkipWindowsUpdateRun
 )
 
 $ErrorActionPreference = 'Stop'
@@ -43,6 +53,9 @@ Import-Module (Join-Path $here 'Install-Chrome.psm1') -Force
 Import-Module (Join-Path $here 'Tweaks.psm1') -Force
 Import-Module (Join-Path $here 'providers/Provider.psm1') -Force
 Import-Module (Join-Path $here 'apps/AppCatalog.psm1') -Force
+Import-Module (Join-Path $here 'WindowsPrep.psm1') -Force
+Import-Module (Join-Path $here 'BiosUpdate.psm1') -Force
+Import-Module (Join-Path $here 'WindowsUpdateRun.psm1') -Force
 
 function Resolve-MsiBoardCode {
     # MSI boards may report an MS-xxxx code instead of the model name; map it via
@@ -87,21 +100,72 @@ function Select-Drivers {
 $logPath = Initialize-Log
 $settings = Get-Settings
 $dryRun = [bool]$WhatIfPreference
+if ($Rehearse) { Enable-Rehearsal -Downloads:$RehearseDownloads }
+
+# Phase ledger: one row per pipeline stage recording how far the run got.
+$ledger = New-Object System.Collections.Generic.List[object]
+function Add-LedgerEntry {
+    param([string] $Phase, [string] $Outcome, [string] $Detail = '')
+    $ledger.Add([pscustomobject]@{ Phase = $Phase; Outcome = $Outcome; Detail = $Detail }) | Out-Null
+}
 
 Write-Log "==================== $((Get-AppName)) first-boot run ====================" -Level Info
 Write-Log "Log file: $logPath" -Level Info
+Write-Log "JSONL log: $(Get-JsonLogFile)" -Level Info
 if ($dryRun) { Write-Log "Mode: DRY RUN (-WhatIf) - nothing will be installed." -Level Warn }
+
+$envSnap = $null
+if (Test-Rehearsal) {
+    Write-Log ("Mode: REHEARSAL - emulate the full stack, install nothing{0}." -f `
+        $(if (Test-RehearsalDownloads) { ' (real downloads enabled for fidelity)' } else { '' })) -Level Warn
+    Set-LogPhase 'env'
+    $envSnap = Get-EnvironmentSnapshot
+    Write-Log ("Environment: {0} build {1} | PS {2} ({3}) | elevated={4} | winget={5} | BITS={6} | {7} GB free | {8} GB RAM" -f `
+        $envSnap.OsCaption, $envSnap.OsBuild, $envSnap.PsVersion, $envSnap.PsEdition, $envSnap.Elevated, `
+        $(if ($envSnap.WingetPresent) { $envSnap.WingetVersion } else { 'ABSENT' }), `
+        $envSnap.BitsService, $envSnap.SystemDriveFreeGB, $envSnap.MemoryGB) -Level Info -Data @{ snapshot = $envSnap }
+    foreach ($h in $envSnap.VendorHosts) {
+        Write-Log ("vendor host {0}: {1}" -f $h.Host, $(if ($h.Reachable) { 'reachable' } else { 'UNREACHABLE' })) -Level Trace
+    }
+    $unreachable = @($envSnap.VendorHosts | Where-Object { -not $_.Reachable })
+    Add-LedgerEntry -Phase 'environment' -Outcome $(if ($unreachable.Count -eq 0) { 'ok' } else { 'degraded' }) `
+        -Detail ("{0}/{1} vendor hosts reachable" -f (@($envSnap.VendorHosts).Count - $unreachable.Count), @($envSnap.VendorHosts).Count)
+}
 
 # --- admin ---------------------------------------------------------------
 if (Test-Admin) {
     Write-Log "Running elevated." -Level Info
-} elseif ($dryRun) {
-    Write-Log "Not elevated; continuing because this is a dry run." -Level Warn
+} elseif ($dryRun -or (Test-Rehearsal)) {
+    Write-Log "Not elevated; continuing (dry run / rehearsal installs nothing)." -Level Warn
 } else {
     Assert-Admin
 }
 
+# --- stage 1a: Windows prep (hold WU before it grabs anything; UAC off) ---
+# Shop order: hold WU -> BIOS -> reboot to UEFI -> (post-flash) restore WU and
+# let it run FULLY -> vendor drivers on top. The hold is temporary by design.
+Set-LogPhase 'windows-prep'
+if ($SkipWindowsPrep) {
+    Write-Log 'Windows prep skipped (-SkipWindowsPrep).' -Level Info
+    Add-LedgerEntry -Phase 'windows-prep' -Outcome 'skipped' -Detail '-SkipWindowsPrep'
+} elseif ((Get-FirstBootState).PSObject.Properties['windowsPrepDone']) {
+    Write-Log 'Windows prep already applied on a previous run; skipping.' -Level Info
+    Add-LedgerEntry -Phase 'windows-prep' -Outcome 'ok' -Detail 'already applied (state marker)'
+} else {
+    $prepResults = @(Invoke-WindowsPrep)
+    foreach ($pr in $prepResults) {
+        Write-Log ("  prep [{0,-11}] {1} {2}" -f $pr.Status, $pr.Step, $pr.Detail) -Level Info
+    }
+    $prepFailed = @($prepResults | Where-Object { $_.Status -eq 'Failed' })
+    if (-not (Test-Rehearsal) -and -not $dryRun -and $prepFailed.Count -eq 0) {
+        Set-FirstBootStateValue -Name 'windowsPrepDone' -Value (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | Out-Null
+    }
+    Add-LedgerEntry -Phase 'windows-prep' -Outcome $(if ($prepFailed.Count -eq 0) { 'ok' } else { 'degraded' }) `
+        -Detail ((@($prepResults | ForEach-Object { "$($_.Step)=$($_.Status)" }) -join ', '))
+}
+
 # --- detect board --------------------------------------------------------
+Set-LogPhase 'detect'
 if ($Model -and $Vendor) {
     $board = [pscustomobject]@{ Vendor = $Vendor.ToLowerInvariant(); Model = $Model; Manufacturer = '(override)'; Version = '' }
     Write-Log "Board (override): vendor=$($board.Vendor), model='$($board.Model)'" -Level Info
@@ -109,8 +173,11 @@ if ($Model -and $Vendor) {
     $board = Get-MotherboardInfo
     Write-Log "Board: manufacturer='$($board.Manufacturer)', model='$($board.Model)', vendor=$($board.Vendor)" -Level Info
 }
+Add-LedgerEntry -Phase 'detect' -Outcome $(if ($board.Vendor) { 'ok' } else { 'blocked' }) `
+    -Detail ("{0} / {1} -> {2}" -f $board.Manufacturer, $board.Model, $(if ($board.Vendor) { $board.Vendor } else { 'no provider' }))
 
 # --- naming reconciliation (mapping table + MS-xxxx codes) ----------------
+Set-LogPhase 'mapping'
 $resolveModel = $board.Model
 $resolveSlug  = $null
 $mapEntry = $null
@@ -131,6 +198,8 @@ if ($board.Vendor -eq 'msi') {
         $resolveModel = $msiName
     }
 }
+Add-LedgerEntry -Phase 'mapping' -Outcome 'ok' `
+    -Detail $(if ($mapEntry) { "hit: '$($board.Model)' -> $($mapEntry.vendor)/$($mapEntry.model)" } else { "no entry (resolving '$resolveModel' as-is)" })
 
 $driverResults = New-Object System.Collections.Generic.List[object]
 $fallbackOpened = $false
@@ -145,7 +214,11 @@ $mirrorBase = if ($Mirror) { $Mirror }
               else { $null }
 
 # 1) Local driver mirror first (LAN; works offline-from-internet).
+Set-LogPhase 'source'
 $index = $null
+if (-not $mirrorBase) {
+    Add-LedgerEntry -Phase 'mirror' -Outcome 'skipped' -Detail 'no mirror configured'
+}
 if ($mirrorBase) {
     Write-Log "Checking local driver mirror: $mirrorBase" -Level Info
     try {
@@ -155,26 +228,39 @@ if ($mirrorBase) {
             $drivers = @($libEntries | ForEach-Object { ConvertTo-MirrorDriverEntry -LibEntry $_ -MirrorBase $mirrorBase })
             $driverSource = "mirror ($mirrorBase)"
             Write-Log "Driver source: local mirror - $(@($drivers).Count) entr(ies) for '$($board.Model)'." -Level Success
+            Add-LedgerEntry -Phase 'mirror' -Outcome 'ok' -Detail "$(@($drivers).Count) entries from $mirrorBase"
         } else {
             Write-Log "Mirror has no entry for '$($board.Model)'; using vendor." -Level Info
+            Add-LedgerEntry -Phase 'mirror' -Outcome 'skipped' -Detail "no entry for '$($board.Model)'"
         }
-    } catch { Write-Log "Mirror lookup failed: $($_.Exception.Message); using vendor." -Level Warn }
+    } catch {
+        Write-Log "Mirror lookup failed: $($_.Exception.Message); using vendor." -Level Warn
+        Add-LedgerEntry -Phase 'mirror' -Outcome 'blocked' -Detail $_.Exception.Message
+    }
 }
 
 # 2) Vendor path (only when the mirror did not supply the drivers).
 if (-not $drivers) {
     if (-not $board.Vendor) {
         Write-Log "Unrecognised motherboard manufacturer; no driver provider." -Level Warn
+        Add-LedgerEntry -Phase 'vendor-resolve' -Outcome 'blocked' -Detail 'unrecognised manufacturer'
     } else {
         $provider = Get-Provider -Vendor $board.Vendor
         if (-not $provider) {
             Write-Log "No provider registered for vendor '$($board.Vendor)'." -Level Warn
+            Add-LedgerEntry -Phase 'vendor-resolve' -Outcome 'blocked' -Detail "no provider for '$($board.Vendor)'"
         } else {
             Write-Log "Provider: $($provider.Name) (headless=$($provider.SupportsHeadless)); resolving '$resolveModel'$(if($resolveSlug){" (slug $resolveSlug)"})" -Level Info
             try { $identity = & $provider.ResolveProduct $resolveModel $resolveSlug } catch { Write-Log "Resolve failed: $($_.Exception.Message)" -Level Warn }
+            Add-LedgerEntry -Phase 'vendor-resolve' -Outcome $(if ($identity) { 'ok' } else { 'blocked' }) `
+                -Detail $(if ($identity) { "$($provider.Name) resolved '$resolveModel'" } else { "$($provider.Name) could not resolve '$resolveModel'" })
             if ($provider.SupportsHeadless -and $identity) {
                 try { $drivers = & $provider.GetDriverList $identity $Osid }
                 catch { Write-Log "Headless driver list failed: $($_.Exception.Message)" -Level Warn }
+                Add-LedgerEntry -Phase 'driver-list' -Outcome $(if ($drivers) { 'ok' } else { 'blocked' }) `
+                    -Detail $(if ($drivers) { "$(@($drivers).Count) file(s) from $($provider.Name)" } else { 'headless list failed' })
+            } elseif ($identity) {
+                Add-LedgerEntry -Phase 'driver-list' -Outcome 'fallback' -Detail "$($provider.Name) is fallback-only (no headless list)"
             }
             if ($drivers -and -not $mapEntry) {
                 # Self-heal the mapping cache after a successful headless resolve.
@@ -191,7 +277,57 @@ if (-not $drivers) {
     }
 }
 
+# --- stage 1b: BIOS update hand-off (stage file + reboot to UEFI) ----------
+# Runs before any driver installs. Real runs end at the reboot; after the tech
+# flashes and boots back, the state marker skips this and the pipeline
+# continues below. Rehearsal emulates and carries on.
+Set-LogPhase 'bios'
+if ($SkipBiosUpdate) {
+    Write-Log 'BIOS stage skipped (-SkipBiosUpdate).' -Level Info
+    Add-LedgerEntry -Phase 'bios' -Outcome 'skipped' -Detail '-SkipBiosUpdate'
+} else {
+    $biosResult = Invoke-BiosStage -Board $board -Provider $provider -Identity $identity `
+        -RawDrivers @($drivers) -MirrorBase $mirrorBase
+    Add-LedgerEntry -Phase 'bios' -Outcome $(switch ($biosResult.Status) {
+            'Staged'    { 'ok' }
+            'Rehearsed' { 'ok' }
+            'Skipped'   { 'skipped' }
+            'Fallback'  { 'fallback' }
+            default     { 'blocked' }
+        }) -Detail "$($biosResult.Status): $($biosResult.Detail)"
+    if ($biosResult.RebootRequested) {
+        Write-Log 'BIOS staged; this run ends here. After flashing in UEFI, boot back into Windows and re-run - the pipeline resumes from Windows Update + drivers.' -Level Success
+        Write-Log "Done. Full transcript: $logPath" -Level Success
+        exit 0
+    }
+}
+
+# --- stage 2: Windows Update runs its FULL course (post-BIOS) --------------
+# WU gets all of its updates + generic drivers out of the way first; the
+# vendor drivers below then replace its defaults. Real runs exit at WU-driven
+# reboots and resume via RunOnce; rehearsal scans + reports without touching.
+Set-LogPhase 'windows-update'
+if ($SkipWindowsUpdateRun) {
+    Write-Log 'Windows Update stage skipped (-SkipWindowsUpdateRun).' -Level Info
+    Add-LedgerEntry -Phase 'windows-update' -Outcome 'skipped' -Detail '-SkipWindowsUpdateRun'
+} else {
+    $wuResult = Invoke-WindowsUpdateStage
+    Add-LedgerEntry -Phase 'windows-update' -Outcome $(switch ($wuResult.Status) {
+            'Completed'      { 'ok' }
+            'Rehearsed'      { 'ok' }
+            'Skipped'        { 'ok' }
+            'RebootRequired' { 'ok' }
+            default          { 'blocked' }
+        }) -Detail "$($wuResult.Status): $($wuResult.Detail)"
+    if ($wuResult.RebootRequested) {
+        Write-Log 'Restarting to continue Windows Update; the pipeline resumes automatically (RunOnce).' -Level Success
+        Write-Log "Done. Full transcript: $logPath" -Level Success
+        exit 0
+    }
+}
+
 # 3) Install whatever the source produced (mirror or vendor share this path).
+Set-LogPhase 'drivers'
 if ($drivers) {
     $kept = Select-Drivers -Drivers $drivers -AllowCategories $Categories `
         -DenyDefault $settings.categories.denyDefault -IncludeBiosEntries:$IncludeBios
@@ -213,9 +349,14 @@ if ($drivers) {
         $driverResults.Add($r) | Out-Null
     }
     Write-Progress -Id 0 -Activity "$(Get-AppName): installing drivers" -Completed
+
+    $byStatus = @($driverResults | Group-Object Status | ForEach-Object { "$($_.Count) $($_.Name)" }) -join ', '
+    Add-LedgerEntry -Phase 'drivers' -Outcome $(if (@($driverResults | Where-Object { $_.Status -in 'Failed', 'Blocked', 'HashFailed' }).Count -eq 0) { 'ok' } else { 'degraded' }) `
+        -Detail $byStatus
 }
 
 # 4) Chrome fallback when neither mirror nor vendor produced drivers.
+Set-LogPhase 'fallback'
 if (-not $drivers) {
     $fallbackUrl = $null
     if ($mapEntry -and $mapEntry.downloadPage) { $fallbackUrl = [string]$mapEntry.downloadPage }
@@ -228,10 +369,14 @@ if (-not $drivers) {
         foreach ($c in 'Chipset', 'LAN / Ethernet', 'Wi-Fi / Wireless', 'Bluetooth', 'Audio', 'Graphics (VGA)', 'Storage (SATA/RAID)') {
             Write-Log "    [ ] $c driver" -Level Info
         }
+        Add-LedgerEntry -Phase 'fallback' -Outcome 'fallback' -Detail $fallbackUrl
+    } else {
+        Add-LedgerEntry -Phase 'fallback' -Outcome 'blocked' -Detail 'no fallback URL available'
     }
 }
 
 # --- GPU detection (shared by the GPU-driver and apps phases) ------------
+Set-LogPhase 'gpu'
 $gpus = @()
 $gpuVendors = @()
 try {
@@ -249,6 +394,7 @@ try {
 $gpuResults = New-Object System.Collections.Generic.List[object]
 if ($SkipGpu) {
     Write-Log "GPU driver phase skipped (-SkipGpu)." -Level Info
+    Add-LedgerEntry -Phase 'gpu' -Outcome 'skipped' -Detail '-SkipGpu'
 } else {
     # NVIDIA: fully headless (resolves its own installer + silent install).
     foreach ($g in ($gpus | Where-Object { $_.Vendor -eq 'nvidia' })) {
@@ -271,14 +417,24 @@ if ($SkipGpu) {
             Write-Log "$v GPU driver: no pinned/mirrored installer; the vendor app (apps phase) will carry it. To make it unattended, pin '$v.url' in defaults.json or stage it in the driver library." -Level Info
         }
     }
+    # NOTE: use the List's own .Count - @() around a generic List throws
+    # 'Argument types do not match' on some Win11 PS 5.1 builds (seen on
+    # 5.1.26100.8894); piping (@($list | ...)) is unaffected.
+    $gpuTxt = if ($gpuResults.Count -gt 0) {
+        (@($gpuResults | ForEach-Object { "$($_.Gpu): $($_.Status)" }) -join '; ')
+    } else { "no headless GPU-driver work ($(@($gpus).Count) GPU(s): $($gpuVendors -join ', '))" }
+    Add-LedgerEntry -Phase 'gpu' -Outcome $(if (@($gpuResults | Where-Object { $_.Status -in 'Failed', 'Blocked' }).Count -eq 0) { 'ok' } else { 'degraded' }) `
+        -Detail $gpuTxt
 }
 
 # --- apps phase ----------------------------------------------------------
+Set-LogPhase 'apps'
 $appResults = New-Object System.Collections.Generic.List[object]
 $appsEnabled = $true
 try { $appsEnabled = [bool]$settings.apps.enabled } catch { }
 if ($SkipApps -or -not $appsEnabled) {
     Write-Log "Apps phase skipped." -Level Info
+    Add-LedgerEntry -Phase 'apps' -Outcome 'skipped' -Detail $(if ($SkipApps) { '-SkipApps' } else { 'disabled in config' })
 } else {
     Write-Log "Apps phase: matching GPU vendors + peripherals to the catalog..." -Level Info
     try {
@@ -298,20 +454,32 @@ if ($SkipApps -or -not $appsEnabled) {
             $appResults.Add($r) | Out-Null
         }
         Write-Progress -Id 0 -Activity "$(Get-AppName): installing apps" -Completed
+        Add-LedgerEntry -Phase 'apps' -Outcome $(if (@($appResults | Where-Object { $_.Status -eq 'Failed' }).Count -eq 0) { 'ok' } else { 'degraded' }) `
+            -Detail ("{0} match(es): {1}" -f @($appMatches).Count, ((@($appResults | ForEach-Object { "$($_.Name)=$($_.Status)" }) -join ', ')))
     } catch {
         Write-Log "Apps phase error: $($_.Exception.Message)" -Level Warn
+        Add-LedgerEntry -Phase 'apps' -Outcome 'blocked' -Detail $_.Exception.Message
     }
 }
 
 # --- tweaks / provisioning phase -----------------------------------------
+Set-LogPhase 'tweaks'
 if ($SkipTweaks) {
     Write-Log "Tweaks phase skipped (-SkipTweaks)." -Level Info
+    Add-LedgerEntry -Phase 'tweaks' -Outcome 'skipped' -Detail '-SkipTweaks'
 } else {
     Write-Log "Tweaks phase: applying provisioning (default browser, taskbar, OneDrive/Copilot, wallpaper)..." -Level Info
-    try { Invoke-Tweaks -Tier $Tier } catch { Write-Log "Tweaks phase error: $($_.Exception.Message)" -Level Warn }
+    try {
+        Invoke-Tweaks -Tier $Tier
+        Add-LedgerEntry -Phase 'tweaks' -Outcome 'ok' -Detail $(if (Test-Rehearsal) { 'emulated (see REHEARSE lines)' } else { 'applied' })
+    } catch {
+        Write-Log "Tweaks phase error: $($_.Exception.Message)" -Level Warn
+        Add-LedgerEntry -Phase 'tweaks' -Outcome 'blocked' -Detail $_.Exception.Message
+    }
 }
 
 # --- summary -------------------------------------------------------------
+Set-LogPhase 'summary'
 Write-Log "-------------------- summary --------------------" -Level Info
 Write-Log "Board: $($board.Manufacturer) / $($board.Model) ($($board.Vendor))" -Level Info
 foreach ($r in $driverResults) {
@@ -324,6 +492,35 @@ foreach ($r in $appResults) {
     Write-Log ("  app    [{0,-11}] {1} ({2})" -f $r.Status, $r.Name, $r.Method) -Level Info
 }
 if ($fallbackOpened) { Write-Log "A vendor page was opened for manual completion." -Level Warn }
+
+# --- rehearsal report ----------------------------------------------------
+if (Test-Rehearsal) {
+    Write-Log "-------------------- rehearsal report (how far could this machine get?) --------------------" -Level Info
+    foreach ($e in $ledger) {
+        $lvl = switch ($e.Outcome) {
+            'blocked'  { 'Warn' }
+            'degraded' { 'Warn' }
+            default    { 'Info' }
+        }
+        Write-Log ("  {0,-15} {1,-9} {2}" -f $e.Phase, $e.Outcome, $e.Detail) -Level $lvl
+    }
+
+    $reportPath = Join-Path (Get-LogDirectory) ('rehearsal_{0}.json' -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+    $report = [pscustomobject]@{
+        generatedAt   = (Get-Date).ToString('o')
+        machine       = $envSnap
+        board         = $board
+        ledger        = $ledger.ToArray()
+        driverResults = $driverResults.ToArray()
+        gpuResults    = $gpuResults.ToArray()
+        appResults    = $appResults.ToArray()
+        textLog       = $logPath
+        jsonLog       = (Get-JsonLogFile)
+    }
+    ConvertTo-Json -InputObject $report -Depth 8 | Set-Content -LiteralPath $reportPath -Encoding UTF8 -WhatIf:$false
+    Write-Log "Rehearsal report (portable JSON, collect these across machines): $reportPath" -Level Success
+}
+
 Write-Log "Done. Full transcript: $logPath" -Level Success
 
 exit 0
