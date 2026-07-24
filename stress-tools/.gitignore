@@ -1,0 +1,4 @@
+# Tool binaries are staged locally, not committed (license + size).
+*
+!.gitignore
+!README.md
