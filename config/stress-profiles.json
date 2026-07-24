@@ -1,0 +1,68 @@
+{
+  "_comment": "QC stress profiles + tool catalog (docs/stress-harness.md). A profile is an ordered list of stages; each stage names a tool from 'tools' and its parameters. The harness stamps QPC-timestamped markers around every stage (for the external 1kHz power-rig correlation), samples telemetry when available, scans WHEA over the window, and writes a device-ID'd JSONL report. Tools are located under stress-tools/ on the stick; a tool whose binary is absent is reported as unavailable and its stages are skipped (never fabricated). NOTHING here runs during provisioning - the stress harness is a separate QC step (tools/Invoke-StressTest.ps1).",
+  "tools": [
+    {
+      "key": "prime95",
+      "kind": "cpu",
+      "title": "Prime95 (CPU/FPU torture)",
+      "binary": "prime95/prime95.exe",
+      "license": "free-commercial-ok",
+      "note": "Pull from mersenne.org per-machine; not redistributed in-repo. Small-FFT torture for heat/power, blend for RAM+cache."
+    },
+    {
+      "key": "memtest_vulkan",
+      "kind": "vram",
+      "title": "memtest_vulkan (VRAM)",
+      "binary": "memtest_vulkan/memtest_vulkan.exe",
+      "license": "open",
+      "note": "GpuZelenograd; NVIDIA/AMD/Intel via Vulkan."
+    },
+    {
+      "key": "diskspd",
+      "kind": "storage",
+      "title": "diskspd (storage)",
+      "binary": "diskspd/diskspd.exe",
+      "license": "mit",
+      "note": "Microsoft diskspd; read/write mix, non-destructive to a scratch file on the target drive."
+    },
+    {
+      "key": "cec-gpu-thrash",
+      "kind": "gpu",
+      "title": "CEC GPU thrasher (CubeCL)",
+      "binary": "cec-gpu-thrash/cec-gpu-thrash.exe",
+      "license": "in-house",
+      "note": "Our custom Rust/CubeCL burner (docs/stress-harness.md): load-shape scenarios (steady/burst/sweep/cross-load) + closed-loop wattage targeting; emits its own QPC markers. Binary shipped in the payload once built."
+    }
+  ],
+  "profiles": [
+    {
+      "name": "smoke",
+      "description": "Fast sanity pass - short CPU + storage + VRAM, catches gross instability before a full soak.",
+      "stages": [
+        { "tool": "prime95", "mode": "smallfft", "seconds": 120 },
+        { "tool": "diskspd", "mode": "mixed", "seconds": 60 },
+        { "tool": "memtest_vulkan", "mode": "quick", "seconds": 120 }
+      ]
+    },
+    {
+      "name": "soak",
+      "description": "Full QC soak - CPU blend, VRAM, storage, then GPU steady + bursty + CPU-cross-load worst case.",
+      "stages": [
+        { "tool": "prime95", "mode": "blend", "seconds": 1800 },
+        { "tool": "memtest_vulkan", "mode": "full", "seconds": 600 },
+        { "tool": "diskspd", "mode": "mixed", "seconds": 300 },
+        { "tool": "cec-gpu-thrash", "mode": "steady", "seconds": 600 },
+        { "tool": "cec-gpu-thrash", "mode": "burst", "seconds": 600 },
+        { "tool": "cec-gpu-thrash", "mode": "cross-load-cpu", "seconds": 600 }
+      ]
+    },
+    {
+      "name": "power",
+      "description": "Power-draw characterization for the 1kHz rig - GPU wattage targeting sweeps + CPU max power, dense markers.",
+      "stages": [
+        { "tool": "cec-gpu-thrash", "mode": "watt-sweep", "seconds": 900, "params": { "wattFloor": 0.4, "wattCeil": 1.0, "steps": 10 } },
+        { "tool": "prime95", "mode": "smallfft", "seconds": 600 }
+      ]
+    }
+  ]
+}

@@ -115,14 +115,25 @@ layer, not the QC engine.
 
 ## Phasing
 
-1. **Phase 1 (days):** orchestrator + profiles (CPU=Prime95, storage=diskspd,
-   VRAM=memtest_vulkan), LHM telemetry at 1–10 Hz, WHEA watcher,
-   QPC-timestamped markers, device-ID'd JSONL reports.
-2. **Phase 2:** OCCT/BurnInTest licensed layer wrapped for the certified
-   customer-facing report; combined power profile (CPU+GPU simultaneous).
-3. **Phase 3:** custom Vulkan burner (if warranted), RAM pattern tester,
-   per-core cycling (CoreCycler-style), report dashboard on the designated
-   server.
+1. **Phase 1 — BUILT (orchestration skeleton):** `src/StressHarness.psm1` +
+   `config/stress-profiles.json` + `tools/Invoke-StressTest.ps1`. Device-ID'd
+   run (SMBIOS UUID + board serial), QPC-precision markers around every stage
+   into a `stress_<id>_<stamp>.markers.jsonl`, WHEA-window scan (any event =
+   Fail), verdict (Pass/Fail/Partial/Rehearsed), device-ID'd JSON report under
+   `%ProgramData%\firstboot\logs\`. Tool launch and telemetry are mockable
+   seams; the orchestration is fully offline-tested and **never loads the box
+   it's developed on**. `-Rehearse` plans + emits markers with zero load.
+   *Not yet wired (needs the real binaries on-hand to do safely):* the verified
+   per-tool `argsTemplate`s (a tool with none reports `NeedsIntegration`, never
+   a guessed command) and the LHM telemetry reader (seam returns "unavailable"
+   until the HVCI-validated DLL is staged).
+2. **Phase 2:** stage the tool binaries + verify each CLI into an `argsTemplate`
+   (Prime95, diskspd, memtest_vulkan); HVCI-validate + wire LibreHardwareMonitor
+   as a periodic background sampler (1–10 Hz); combined CPU+GPU profile.
+3. **Phase 3:** the custom Rust/CubeCL GPU thrasher (its own repo, compiled
+   binary dropped into `stress-tools/`) with the load-shape + wattage engine;
+   RAM pattern tester; report dashboard on the designated server; optional
+   licensed OCCT/BurnInTest layer for the certified customer-facing report.
 
 ## Sources (key)
 
