@@ -83,6 +83,24 @@ Describe 'Stress: tool adapter (no real load)' {
         } finally { Disable-Rehearsal }
         Should -Invoke -ModuleName StressHarness Start-Process -Times 0 -Exactly
     }
+    It 'the -WhatIf/ShouldProcess gate blocks the launch (audit #5 regression)' {
+        Mock -ModuleName StressHarness Test-StressToolAvailable { $true }
+        Mock -ModuleName StressHarness Start-Process { throw 'must not launch under -WhatIf' }
+        $tool = [pscustomobject]@{ key = 'prime95'; kind = 'cpu'; binary = 'prime95/prime95.exe'; argsTemplate = '-t {seconds}' }
+        # Rehearsal OFF; -WhatIf must still short-circuit to Rehearsed before launch.
+        $r = Invoke-StressTool -Tool $tool -Stage $script:stage -WhatIf
+        $r.Status | Should -Be 'Rehearsed'
+        Should -Invoke -ModuleName StressHarness Start-Process -Times 0 -Exactly
+    }
+    It 'tolerates a stage with no mode/seconds (audit #3 regression)' {
+        Mock -ModuleName StressHarness Test-StressToolAvailable { $true }
+        Mock -ModuleName StressHarness Start-Process { throw 'must not launch' }
+        $tool = [pscustomobject]@{ key = 'prime95'; kind = 'cpu'; binary = 'prime95/prime95.exe'; argsTemplate = '-fixed' }
+        $bareStage = [pscustomobject]@{ tool = 'prime95' }   # no mode, no seconds
+        Enable-Rehearsal
+        try { { Invoke-StressTool -Tool $tool -Stage $bareStage } | Should -Not -Throw }
+        finally { Disable-Rehearsal }
+    }
 }
 
 Describe 'Stress: verdict logic' {
@@ -107,6 +125,12 @@ Describe 'Stress: verdict logic' {
     It 'reports Rehearsed under rehearsal' {
         $stages = @([pscustomobject]@{ Status = 'Rehearsed' })
         (Get-StressVerdict -Stages $stages -WheaCount 0 -Rehearsed).Verdict | Should -Be 'Rehearsed'
+    }
+    It 'does NOT pass when the WHEA scan failed (audit #1 regression)' {
+        $stages = @([pscustomobject]@{ Status = 'Ran' })
+        $v = Get-StressVerdict -Stages $stages -WheaCount 0 -WheaScanFailed
+        $v.Verdict | Should -Be 'Fail'
+        $v.Detail | Should -Match 'cannot certify'
     }
 }
 
@@ -143,5 +167,14 @@ Describe 'Stress: Invoke-StressRun orchestration (mocked tools, no load)' {
     }
     It 'throws on an unknown profile' {
         { Invoke-StressRun -ProfileName 'nope' } | Should -Throw
+    }
+    It '-WhatIf yields Rehearsed, not a green Pass (audit #2 regression)' {
+        (Invoke-StressRun -ProfileName 'smoke' -WhatIf).verdict | Should -Be 'Rehearsed'
+    }
+    It 'fails the run (not Pass) when the WHEA scan itself throws (audit #1 regression)' {
+        Mock -ModuleName StressHarness Get-WheaEvents { throw 'RPC server unavailable' }
+        $r = Invoke-StressRun -ProfileName 'smoke'
+        $r.verdict | Should -Be 'Fail'
+        $r.whea.scanFailed | Should -BeTrue
     }
 }

@@ -152,8 +152,13 @@ function Get-WheaEvents {
             }
         })
     } catch {
-        # "No events were found" is the healthy case, not an error.
-        return @()
+        # ONLY "no events found" is the healthy empty case. Any other failure
+        # (provider missing on a stripped image, access denied, log/RPC error)
+        # must NOT masquerade as a clean window - the verdict gate is "zero WHEA
+        # = PASS", so a silently-failed scan would false-pass a machine we never
+        # actually checked. Rethrow; the caller turns it into a non-Pass verdict.
+        if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { return @() }
+        throw
     }
 }
 
@@ -235,16 +240,23 @@ function Invoke-StressTool {
         return $result
     }
 
+    # Guard stage fields (a tool may need no mode; StrictMode throws on absent
+    # properties) and bound seconds so a bad profile can't drive a runaway run.
+    $stageSeconds = if ($Stage.PSObject.Properties['seconds']) { [int]$Stage.seconds } else { 0 }
+    $stageMode    = if ($Stage.PSObject.Properties['mode'])    { [string]$Stage.mode } else { '' }
+    if ($stageSeconds -lt 0)     { $stageSeconds = 0 }
+    if ($stageSeconds -gt 86400) { $stageSeconds = 86400 }   # 24h hard cap
+
     $bin = Join-Path (Get-StressToolsRoot -Root $ToolsRoot) ([string]$Tool.binary)
     $toolArgs = [string]$Tool.argsTemplate
-    $toolArgs = $toolArgs.Replace('{seconds}', [string]$Stage.seconds).Replace('{mode}', [string]$Stage.mode)
+    $toolArgs = $toolArgs.Replace('{seconds}', [string]$stageSeconds).Replace('{mode}', $stageMode)
 
     if (Test-Rehearsal) {
         Write-Log ("REHEARSE: would run stress tool: `"{0}`" {1}" -f $bin, $toolArgs) -Level Info -Data @{ command = "$bin $toolArgs" }
         $result.Status = 'Rehearsed'; $result.Detail = "$bin $toolArgs"
         return $result
     }
-    if (-not $PSCmdlet.ShouldProcess($Tool.key, "run for $($Stage.seconds)s ($($Stage.mode))")) {
+    if (-not $PSCmdlet.ShouldProcess($Tool.key, "run for ${stageSeconds}s ($stageMode)")) {
         $result.Status = 'Rehearsed'; $result.Detail = 'WhatIf'
         return $result
     }
@@ -320,18 +332,24 @@ function Get-StressVerdict {
     param(
         [AllowEmptyCollection()][array] $Stages,
         [int] $WheaCount = 0,
-        [switch] $Rehearsed
+        [switch] $Rehearsed,
+        [switch] $WheaScanFailed
     )
     $failed  = @($Stages | Where-Object { $_.Status -eq 'Failed' })
     $skipped = @($Stages | Where-Object { $_.Status -in 'Unavailable', 'NeedsIntegration' })
     $ran     = @($Stages | Where-Object { $_.Status -in 'Ran', 'Rehearsed' })
 
+    # Rehearsed (a -Rehearse OR -WhatIf dry run) is never a real QC verdict.
     if ($Rehearsed) { return [pscustomobject]@{ Verdict = 'Rehearsed'; Detail = "$($ran.Count) stage(s) planned" } }
     if ($failed.Count -gt 0) {
         return [pscustomobject]@{ Verdict = 'Fail'; Detail = "$($failed.Count) stage failure(s)$(if($WheaCount){"; $WheaCount WHEA event(s)"})" }
     }
     if ($WheaCount -gt 0) {
         return [pscustomobject]@{ Verdict = 'Fail'; Detail = "$WheaCount WHEA event(s) during the stress window (margin failure)" }
+    }
+    # A WHEA scan that could not run must NOT certify a clean pass.
+    if ($WheaScanFailed) {
+        return [pscustomobject]@{ Verdict = 'Fail'; Detail = 'WHEA scan failed - cannot certify the machine had zero hardware errors' }
     }
     if ($skipped.Count -gt 0) {
         return [pscustomobject]@{ Verdict = 'Partial'; Detail = "$($ran.Count) ran, $($skipped.Count) skipped (tool unavailable / not integrated)" }
@@ -357,8 +375,11 @@ function Invoke-StressRun {
     )
 
     if (-not $Config) { $Config = Get-StressProfileConfig }
+    if (-not $Config.PSObject.Properties['profiles']) { throw 'Stress config has no profiles[].' }
+    if (-not $Config.PSObject.Properties['tools'])    { throw 'Stress config has no tools[].' }
     $prof = $Config.profiles | Where-Object { $_.name -eq $ProfileName } | Select-Object -First 1
     if (-not $prof) { throw "Stress profile not found: '$ProfileName'." }
+    if (-not $prof.PSObject.Properties['stages']) { throw "Profile '$ProfileName' has no stages[]." }
 
     $device = Get-StressDeviceId
     $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
@@ -386,11 +407,19 @@ function Invoke-StressRun {
     $seq.Value++
     Write-StressMarker -MarkerFile $markerFile -Marker (New-StressMarker -Seq $seq.Value -EventKind 'run-stop')
 
-    $whea = @(Get-WheaEvents -Since $runStart)
+    # A WHEA scan that throws (provider missing / access denied) must fail the
+    # verdict, never pass silently.
+    $whea = @()
+    $wheaScanFailed = $false
+    try { $whea = @(Get-WheaEvents -Since $runStart) }
+    catch { $wheaScanFailed = $true; Write-Log "WHEA scan failed: $($_.Exception.Message)" -Level Error }
     if ($whea.Count -gt 0) {
         foreach ($e in $whea) { Write-Log ("WHEA during stress: id {0} level {1} @ {2}" -f $e.Id, $e.Level, $e.TimeCreated) -Level Error }
     }
-    $verdict = Get-StressVerdict -Stages $stageResults.ToArray() -WheaCount $whea.Count -Rehearsed:(Test-Rehearsal)
+    # -WhatIf is a dry run too: nothing actually stressed, so it is Rehearsed,
+    # not a green Pass.
+    $verdict = Get-StressVerdict -Stages $stageResults.ToArray() -WheaCount $whea.Count `
+        -Rehearsed:((Test-Rehearsal) -or $WhatIfPreference) -WheaScanFailed:$wheaScanFailed
 
     $report = [pscustomobject]@{
         generatedAt        = (Get-Date).ToString('o')
@@ -399,7 +428,7 @@ function Invoke-StressRun {
         markersFile        = $markerFile
         telemetryAvailable = (Test-StressTelemetryAvailable -ToolsRoot $ToolsRoot)
         stages             = $stageResults.ToArray()
-        whea               = [pscustomobject]@{ count = $whea.Count; events = $whea }
+        whea               = [pscustomobject]@{ count = $whea.Count; events = $whea; scanFailed = $wheaScanFailed }
         verdict            = $verdict.Verdict
         verdictDetail      = $verdict.Detail
         elapsedSeconds     = [Math]::Round(((Get-Date) - $runStart).TotalSeconds, 1)
