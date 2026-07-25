@@ -253,6 +253,57 @@
                     <Description>Disable network adapters for OOBE (avoids mandatory ZDP updates + the reboot that breaks autologon)</Description>
                     <Path>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-NetAdapter | Disable-NetAdapter -Confirm:$false -ErrorAction SilentlyContinue"</Path>
                 </RunSynchronousCommand>
+
+                <!--
+                    ============ AUTOMATIC DEVICE ENCRYPTION CONTROL ============
+                    READ unattend/README.md BEFORE CHANGING THIS. It is a shop
+                    POLICY decision, not a purely technical one, and there is a
+                    licensing angle.
+
+                    What actually happens on 24H2/25H2: Microsoft dropped the old
+                    Modern Standby/HSTI prerequisites, so a clean install on a
+                    machine with TPM + Secure Boot + PCR7 support encrypts the
+                    drive during OOBE regardless of account type.
+
+                    On a LOCAL-ACCOUNT machine it stops half way: the volume ends
+                    up encrypted with a CLEAR KEY - the equivalent of BitLocker
+                    "suspended". Verified state on a real 25H2 Pro local-account
+                    box: 100% encrypted, "Protection Off", Control Panel says
+                    "waiting for activation".
+
+                    That means it is NOT a lockout risk (the TPM is never
+                    consulted, so BIOS flashes and CMOS clears cannot trigger a
+                    recovery prompt) - but it is ALSO NOT SECURITY. The key sits
+                    unprotected on the disk; someone demonstrated reading such a
+                    drive by booting a WinPE stick. Shipping that state gives the
+                    customer the performance cost of encryption, a Control Panel
+                    that says "encrypted", and zero actual protection.
+
+                    So the real choice is: ship DECRYPTED (this setting), or ship
+                    genuinely ARMED with the recovery key printed and boxed.
+                    Shipping the half-state is the one option to avoid.
+
+                    LICENSING CAVEAT on this setting: Microsoft's OEM BitLocker
+                    doc says disabling device encryption outside of "OEM
+                    implements their own encryption technology" is "prohibited as
+                    it violates the Windows 11 licensing requirements". Weigh
+                    that before standardising on it.
+
+                    Either way the ship-out stage MUST verify rather than assume:
+                    'manage-bde -status' (0.0% vs 100% is the discriminator -
+                    both decrypted and clear-key states report "Protection Off")
+                    and 'manage-bde -protectors -get C:' to catch a recovery
+                    password that exists but was never shown to anyone.
+
+                    NOTE: many DIY desktops never auto-encrypt at all - a discrete
+                    GPU or add-in card with an option ROM breaks PCR7 binding.
+                    Behaviour varies per build, so test per configuration.
+                -->
+                <RunSynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+                    <Order>4</Order>
+                    <Description>Prevent automatic device encryption during OOBE (see README - policy + licensing decision)</Description>
+                    <Path>reg add "HKLM\SYSTEM\CurrentControlSet\Control\BitLocker" /v PreventDeviceEncryption /t REG_DWORD /d 1 /f</Path>
+                </RunSynchronousCommand>
             </RunSynchronous>
         </component>
     </settings>

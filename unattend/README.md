@@ -139,13 +139,100 @@ traces in three places:
 - [ ] Disable, rename, or delete the bench account
 - [ ] Delete `C:\Windows.old` — 24H2+ treats a clean install as an upgrade and
       leaves an empty one behind
-- [ ] **Verify BitLocker state.** 24H2+ can silently enable device encryption
-      during OOBE on capable hardware. A local account *usually* prevents it but
-      not always — and shipping a customer a silently-encrypted drive with no
-      escrowed recovery key is a support disaster. Check every machine.
+- [ ] **Resolve disk-encryption state** — see the section below; this is a
+      policy decision, and the state must never be left ambiguous.
 
 Treat the bench password as throwaway, used only for imaging, rotated per media
 revision, and never reused anywhere else.
+
+## Disk encryption — decide the policy, then enforce it
+
+**What actually happens on 24H2/25H2.** Microsoft dropped the old Modern
+Standby/HSTI prerequisites, so a clean install on a machine with TPM + Secure
+Boot + PCR7 support encrypts the drive during OOBE regardless of account type.
+On a **local-account** machine it then stops half way: the volume is encrypted
+with a **clear key** — the equivalent of BitLocker *suspended*. Verified on a
+real 25H2 Pro local-account machine: 100% encrypted, `Protection Off`, Control
+Panel showing *"waiting for activation"*.
+
+Two consequences, and the first one corrects a common fear:
+
+- **It is not a lockout risk.** Nothing is sealed to the TPM, so BIOS flashes,
+  Secure Boot toggles, CMOS clears and board swaps cannot trigger a recovery
+  prompt on a machine in this state.
+- **It is also not security.** The key sits unprotected on the disk — someone
+  demonstrated reading exactly such a drive by booting a WinPE stick. The
+  customer gets the performance cost of encryption, a Control Panel that says
+  "encrypted", and no actual protection.
+
+**So the choice is between two good options, and one bad one:**
+
+| | Model | Trade |
+| --- | --- | --- |
+| **A** | **Ship decrypted** — `PreventDeviceEncryption=1` (in this file), verify 0.0% before boxing | Simplest, no lockout risk, no support burden. Customer has no encryption. **Licensing caveat below.** |
+| **B** | **Ship genuinely armed** — add TPM + recovery-password protectors, enable protection, print the 48-digit key on a card in the box | Best for the customer. Requires the key never be lost, and a "suspend BitLocker before BIOS updates" warning on the card. |
+| **C** | **Ship the half-state** (encrypted, `Protection Off`) | **Avoid.** Cost of encryption, none of the benefit, and a customer who believes they're protected. This is what a machine defaults to if you don't decide. |
+
+**Licensing caveat on option A:** Microsoft's OEM BitLocker documentation says
+disabling device encryption outside of "OEM implements their own encryption
+technology" is *"prohibited as it violates the Windows 11 licensing
+requirements."* Weigh that before standardising on A. (The binding System
+Builder terms are behind partner auth — pull them if CEC has an account.)
+
+**Verify, never assume — both decrypted and clear-key report `Protection Off`:**
+
+```powershell
+manage-bde -status                      # 0.0% vs 100.0% is the discriminator
+manage-bde -protectors -get C:          # catches a recovery password nobody was shown
+```
+
+Look for *"Uses Secure Boot for integrity validation"* in the protector output:
+present = PCR7 (resilient to firmware updates), absent = the legacy PCR profile
+(fragile to BIOS flashes). **Many DIY desktops never auto-encrypt at all** — a
+discrete GPU or any add-in card with an option ROM breaks PCR7 binding — so
+behaviour varies per build and must be tested per configuration, not assumed.
+
+## Two answer files, two jobs
+
+This file is the **bench** answer file: it installs Windows and gets the
+pipeline running with zero clicks, using a bench account with autologon.
+
+For **shipping**, the better model — and the one Microsoft's OEM documentation
+prescribes — is to seal the machine to OOBE so the *customer* creates their own
+account:
+
+1. Provision in **audit mode** (`Ctrl+Shift+F3` at OOBE, or this file's flow).
+2. Ship-out stage: delete the bench account, clean up per the checklist above,
+   resolve encryption state.
+3. `sysprep /oobe /shutdown` with a **ship** answer file whose `oobeSystem` pass
+   sets `HideOnlineAccountScreens=true` and defines **no** `<UserAccounts>`.
+4. Machine ships powered off. Customer powers on, and gets:
+   language → region → keyboard → **EULA** → *"Who's going to use this device?"*
+   → their own name and password → security questions → desktop. **No Microsoft
+   account required.**
+
+Why this beats shipping a pre-made account:
+
+- **The customer accepts the EULA**, which Microsoft's OEM docs say must happen
+  on the end user's machine (*"you must run sysprep /oobe to ensure that the
+  end-user goes through the out-of-box experience and accepts the license
+  terms"*). The Windows OEM licence is a contract between the end user and *the
+  builder* — a tech clicking Accept on their behalf is incoherent.
+- **The profile folder matches their real name**, by construction. Renaming an
+  account later never renames `C:\Users\<name>` — that's "by design" per
+  Microsoft, and the documented workaround now breaks `winget`, WSL and Docker.
+- **Nothing of yours ships** — no shop-known password, no bench profile.
+- **The sysprep route dodges ConX entirely.** Windows Setup never runs, so OOBE
+  reads the cached `C:\Windows\Panther\unattend.xml` — sidestepping the 24H2+
+  setup-engine change that reportedly ignores the `oobeSystem` pass from media.
+
+Known trap on that route: sysprep on 25H2 can fail with *"Unattend file has
+already been processed"* — fix by adding `wasPassProcessed="false"` to each
+`<settings>` block, or clearing `C:\Windows\System32\Sysprep\Panther`.
+
+Worth putting on a customer card: the three security questions are mandatory at
+local-account creation and are the customer's **only** password-recovery path
+without a Microsoft account.
 
 ## Reconciling with your current file
 
