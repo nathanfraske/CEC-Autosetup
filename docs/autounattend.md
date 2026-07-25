@@ -72,6 +72,22 @@ exit /b 0
 
 `SetupComplete.cmd` already runs as SYSTEM, so no elevation prompt occurs.
 
+> **⚠ TRAP — `SetupComplete.cmd` is silently skipped on machines with an OEM
+> product key.** Microsoft documents this setting as *"disabled when using OEM
+> product keys, except on Enterprise editions and Windows Server"*: `windeploy.exe`
+> finds a firmware (MSDM) key and skips the script **by design, with no error and
+> no log entry you'd notice**. That describes most prebuilt-class boards. The
+> 24H2+ upgrade path also *purges* `C:\Windows\Setup\Scripts`.
+>
+> It also runs in **session 0**, so its console window is invisible — a tech
+> can't watch the pipeline run.
+>
+> **Prefer `FirstLogonCommands`** (as [`unattend/autounattend.xml`](../unattend/autounattend.xml)
+> does): it runs in the interactive session so the window is on screen, and it
+> runs elevated when the logged-on account is an admin. If you need SYSTEM-context
+> work *before* logon, use `Microsoft-Windows-Deployment\RunSynchronous` in the
+> `specialize` pass instead of `SetupComplete.cmd`.
+
 ---
 
 ## Disabling UAC in the unattend (preferred over the runtime tweak)

@@ -63,61 +63,96 @@
                    versionScope="nonSxS">
 
             <UserData>
+                <!-- REQUIRED for any unattended install. Different element from
+                     HideEULAPage below; without this, Setup shows UI. -->
                 <AcceptEula>true</AcceptEula>
                 <!--
-                    ProductKey here is an EDITION SELECTOR, not activation. On a
-                    multi-edition ISO, omitting it makes Setup stop and ask which
-                    edition to install - a button press. The value below is
-                    Microsoft's published generic Pro key: it selects Pro and
-                    does NOT activate. Real activation comes from the board's
-                    embedded OEM key or your licensing.
-                    Remove this block if your ISO is single-edition Pro.
+                    EDITION FORCING - keep this even though the image is pinned
+                    below. On a board whose firmware carries an embedded HOME
+                    key (MSDM), Setup will silently auto-select Home and skip
+                    edition selection entirely - you get a Home machine and no
+                    prompt telling you so. This generic Pro key overrides that.
+
+                    It is Microsoft's published generic Pro key: it selects the
+                    edition and does NOT activate. Activation still comes from
+                    the firmware key or your licensing.
+                    (An INVALID key here makes Setup fail outright - don't
+                    substitute a random key.)
                 -->
                 <ProductKey>
-                    <Key>W269N-WFGWX-YVC9B-4J6C9-T83GX</Key>
+                    <Key>VK7JG-NPHTM-C97JM-9MPGT-3V66T</Key>
                     <WillShowUI>Never</WillShowUI>
                 </ProductKey>
             </UserData>
 
             <!--
+                NOTE: there is deliberately NO <ImageInstall> block.
+
+                The ProductKey above already selects the edition, so an
+                <InstallFrom>/<MetaData> pin would be a redundant second
+                mechanism - and there are field reports of <InstallFrom> itself
+                causing failures on 24H2 when it isn't genuinely needed. Fewer
+                moving parts is the safer trade.
+
+                Critically, omitting <ImageInstall> also means there is no
+                <InstallTo>, which is half of what makes the disk picker appear.
+                (<InstallTo> hardcodes DiskID/PartitionID independently of
+                <DiskConfiguration> - leaving one in while removing the other
+                still silently targets a fixed disk.) Never use
+                <InstallToAvailablePartition>: it searches from disk 0 through
+                every disk and will happily land on a customer's data drive, and
+                setting it together with <InstallTo> fails the install outright.
+            -->
+
+            <!--
                 ============ DISK CONFIGURATION: DELIBERATELY OMITTED ============
-                An automated <DiskConfiguration> block that wipes "DiskID 0" is
-                the single most dangerous thing in an answer file. DiskID
-                ordering is NOT guaranteed to match what the tech thinks is the
-                boot drive - on a build with multiple NVMe/SATA devices (or a
-                customer's data drive plugged in for migration) an automated
-                wipe can destroy the wrong disk irreversibly.
+                Omitting <DiskConfiguration> AND <ImageInstall> is what surfaces
+                the "Where do you want to install Windows?" picker. Everything
+                else in this file stays automated. This is a considered decision,
+                not an unfinished section.
 
-                CEC's stance: the tech picks the target disk. That is ONE screen,
-                and it is the one screen worth keeping.
+                WHY - DiskID is a bare ordinal with no stability guarantee.
+                Microsoft's entire definition is "0 specifies the first disk"; it
+                never defines "first", and never warns that the mapping is
+                firmware-dependent. In practice enumeration follows controller
+                order, and on plenty of desktop boards the NVMe OS drive is NOT
+                disk 0 - a documented firsthand case on an ASUS Prime Z590-A had
+                HDDs enumerate first, putting the OS drive at disk 2.
 
-                If you decide the bench is controlled enough to automate it,
-                uncomment and adapt the block below - and confirm DiskID on the
-                exact hardware first (diskpart > list disk in the installer,
-                Shift+F10). GPT/UEFI layout shown.
+                THE TRAP THAT SHOULD DECIDE IT FOR US: if the internal NVMe is
+                invisible to WinPE, the USB stick becomes disk 0 and a
+                wipe-disk-0 answer file cleans the installer media. The most
+                common cause of that invisibility is Intel RST/VMD enabled in
+                BIOS without the driver loaded into WinPE - i.e. exactly the VMD
+                configuration the driver pipeline already has to reason about.
+                With manual selection that same situation shows up harmlessly as
+                "no drives found" instead of a wiped stick.
 
-            <DiskConfiguration>
-                <WillShowUI>OnError</WillShowUI>
-                <Disk wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
-                    <DiskID>0</DiskID>
-                    <WillWipeDisk>true</WillWipeDisk>
-                    <CreatePartitions>
-                        <CreatePartition wcm:action="add"><Order>1</Order><Type>EFI</Type><Size>260</Size></CreatePartition>
-                        <CreatePartition wcm:action="add"><Order>2</Order><Type>MSR</Type><Size>16</Size></CreatePartition>
-                        <CreatePartition wcm:action="add"><Order>3</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>
-                    </CreatePartitions>
-                    <ModifyPartitions>
-                        <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Label>System</Label><Format>FAT32</Format></ModifyPartition>
-                        <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>2</PartitionID></ModifyPartition>
-                        <ModifyPartition wcm:action="add"><Order>3</Order><PartitionID>3</PartitionID><Label>Windows</Label><Letter>C</Letter><Format>NTFS</Format></ModifyPartition>
-                    </ModifyPartitions>
-                </Disk>
-            </DiskConfiguration>
-            <ImageInstall>
-                <OSImage>
-                    <InstallTo><DiskID>0</DiskID><PartitionID>3</PartitionID></InstallTo>
-                </OSImage>
-            </ImageInstall>
+                Manual selection also means ONE answer file works on every
+                machine regardless of drive layout, with no per-unit editing -
+                and it leaves a human eyeball on the one irreversible step. It is
+                about four seconds per build.
+
+                IF YOU EVER AUTOMATE IT, the non-obvious rules:
+                  * Use native <DiskConfiguration>/<WillWipeDisk>, NOT a diskpart
+                    'clean' script. WillWipeDisk is documented to refuse the disk
+                    running Setup, the booted OS disk, and one holding an active
+                    page file. diskpart clean has NO such guard - which is why
+                    every firsthand wiped-USB-stick report comes from diskpart
+                    tooling.
+                  * Add pre-flight assertions (capacity range, bus type, "no
+                    existing partitions") that HALT setup on mismatch.
+                  * Recovery partition: 990 MB minimum per Microsoft's current
+                    guidance, placed IMMEDIATELY AFTER the Windows partition so
+                    WinRE updates can grow it. Microsoft's own sample scripts
+                    still say 500 MB - that is stale and manufactures the
+                    KB5034441 / 0x80070643 failure into every machine you ship.
+                  * Never assign drive letter X: to a partition - it collides
+                    with the WinPE ramdisk and hangs the install on 24H2+.
+                  * Do not set <WillShowUI>Never</WillShowUI> with no <Disk>
+                    element: documented hard failure.
+                  * Confirm the index on the actual hardware first: Shift+F10 ->
+                    diskpart -> list disk.
                 ================================================================
             -->
         </component>
@@ -150,21 +185,73 @@
                    versionScope="nonSxS">
             <RunSynchronous>
                 <!--
-                    UAC OFF for the provisioning window. This is the "preferred
-                    permanent home" the pipeline's docs point at: with EnableLUA=0
-                    set here, the bench admin's token is unsplit at first logon,
-                    so the pipeline and its resume task never hit a consent
-                    prompt on an unattended reboot.
+                    UAC OFF for the provisioning window. specialize is the right
+                    pass: it runs as SYSTEM before OOBE, and EnableLUA is read at
+                    logon/boot - so it is already in effect by first logon. (Doing
+                    this in FirstLogonCommands would be too late to help the very
+                    commands being run.)
 
-                    The pipeline's WindowsPrep stage detects this is already 0 and
-                    records it, and the ship-out stage restores it before delivery.
-                    KEEP THESE IN SYNC: if you remove this, the runtime stage sets
-                    it instead (one extra reboot for it to take effect).
+                    The pipeline's WindowsPrep stage detects it is already 0 and
+                    records that; the ship-out stage restores it before delivery.
+                    If you delete these, the runtime stage sets them instead - same
+                    end state, one extra reboot to take effect.
+
+                    Worth knowing: FirstLogonCommands under an ADMIN account already
+                    run elevated, so the pipeline itself does not strictly require
+                    UAC-off. This is belt-and-braces against third-party installers
+                    that would otherwise raise a consent dialog mid-run.
+                    Tradeoff: EnableLUA=0 is known to break some UWP/Store apps and
+                    Settings pages - which is fine for a bench window, and exactly
+                    why it must be restored before ship.
                 -->
                 <RunSynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
                     <Order>1</Order>
                     <Description>Disable UAC for the provisioning window</Description>
                     <Path>reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA /t REG_DWORD /d 0 /f</Path>
+                </RunSynchronousCommand>
+                <RunSynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+                    <Order>2</Order>
+                    <Description>No elevation prompt for administrators</Description>
+                    <Path>reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v ConsentPromptBehaviorAdmin /t REG_DWORD /d 0 /f</Path>
+                </RunSynchronousCommand>
+
+                <!--
+                    ================= NETWORK OFF DURING OOBE =================
+                    This is a THROUGHPUT AND RELIABILITY control, not a security
+                    one, and it is the single highest-value line in this file.
+
+                    Microsoft documents that critical zero-day-patch (ZDP) updates
+                    download automatically during OOBE "after the user has
+                    connected to a network" and that "the user can't opt out".
+                    There is NO answer-file, policy, or registry setting that
+                    disables it - the ONLY documented lever is the trigger
+                    condition itself: no network, no ZDP.
+
+                    Why we care, beyond the 30+ minutes it can burn:
+                    a mid-OOBE update RESTART leaves the machine NOT automatically
+                    signed in, which is documented to break autologon provisioning
+                    - i.e. it can strand this very hand-off before the pipeline
+                    ever starts.
+
+                    We lose nothing by deferring: the pipeline runs Windows Update
+                    to full completion itself (stage 2), on our schedule, with our
+                    reboot/resume handling and our logging.
+
+                    Adapters are re-enabled by the FirstLogonCommands launcher
+                    below, immediately before the pipeline starts.
+
+                    TO DISABLE THIS BEHAVIOR: delete this command AND the
+                    Enable-NetAdapter call in FirstLogonCommands, then simply
+                    leave the ethernet unplugged during install instead (same
+                    effect, manual). If the re-enable ever fails, the machine
+                    comes up offline - the pipeline reports that clearly in its
+                    environment snapshot and degrades to its offline path rather
+                    than failing, and Network Connections fixes it by hand.
+                -->
+                <RunSynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+                    <Order>3</Order>
+                    <Description>Disable network adapters for OOBE (avoids mandatory ZDP updates + the reboot that breaks autologon)</Description>
+                    <Path>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-NetAdapter | Disable-NetAdapter -Confirm:$false -ErrorAction SilentlyContinue"</Path>
                 </RunSynchronousCommand>
             </RunSynchronous>
         </component>
@@ -194,16 +281,43 @@
                    versionScope="nonSxS">
 
             <OOBE>
-                <HideEULAPage>true</HideEULAPage>
+                <!--
+                    HideEULAPage: LICENSING CAVEAT, not a technical one.
+                    Microsoft's OEM/System Builder terms say this may be used
+                    "only for testing prior to shipment" - System Builder
+                    licensing expects the end user to get the chance to accept
+                    the EULA. As a system builder, that's your call to make;
+                    set it false if you want the customer to see the EULA on
+                    the machine you deliver.
+                -->
+                <HideEULAPage>true</HideEULAPage>   <!-- CHANGEME: see licensing note -->
                 <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+                <!-- Essential for the no-network-during-OOBE flow above. -->
                 <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
-                <!-- VERIFY: online-account screen suppression is the element
-                     Microsoft has churned most across Win11 builds. Defining a
-                     LocalAccount below is the load-bearing part; these are the
-                     belt-and-braces. -->
+                <!--
+                    Suppresses the online sign-in page. NOTE: this alone is NOT
+                    what bypasses the Microsoft-account wall - the LocalAccount
+                    defined below is the load-bearing part. Microsoft has been
+                    removing the *interactive* bypasses (BypassNRO.cmd,
+                    ms-cxh:localonly) while leaving answer-file account creation
+                    as the supported route - but they have never guaranteed it
+                    indefinitely, so re-test on each feature update.
+                -->
                 <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
-                <HideLocalAccountScreen>true</HideLocalAccountScreen>
-                <ProtectYourPC>3</ProtectYourPC>   <!-- 3 = skip all express settings -->
+                <!--
+                    NOTE: HideLocalAccountScreen is deliberately NOT set here.
+                    Microsoft documents it as applying "only to the Windows
+                    Server editions" - on Win11 Pro it is a no-op, despite
+                    appearing in most community guides as an MSA-bypass step.
+                    Pre-creating the LocalAccount below is what actually stops
+                    the "Who's going to use this device?" screen.
+
+                    Also deliberately absent: SkipMachineOOBE / SkipUserOOBE.
+                    Both are deprecated, are no longer even listed as valid OOBE
+                    child elements, and Microsoft warns they can leave a machine
+                    half-configured. Any guide recommending them is stale.
+                -->
+                <ProtectYourPC>3</ProtectYourPC>   <!-- 3 = skip express settings. NOTE: does NOT control updates on Win11, despite stale Win7-era docs saying so. -->
                 <NetworkLocation>Work</NetworkLocation>
             </OOBE>
 
@@ -238,6 +352,15 @@
                 multi-reboot WU catch-up can't strand the run at a logon prompt.
                 The pipeline's resume task runs as SYSTEM and does not depend on
                 this, but the tech-visible console does.
+
+                DOCUMENTED QUIRK: Windows adds 1 to LogonCount when it is
+                greater than 0, so 12 here yields ~13 automatic logons. Exactly
+                one auto-logon is impossible via LogonCount alone.
+
+                MUST BE CLEARED BEFORE SHIP: the ship-out stage has to zero
+                AutoLogonCount and delete DefaultPassword under
+                HKLM\...\Winlogon - the autologon password is stored there in
+                CLEARTEXT, readable by any authenticated user. See README.
             -->
             <AutoLogon>
                 <Enabled>true</Enabled>
@@ -254,13 +377,24 @@
                 stick landed on and start the pipeline in its own visible window.
 
                 Why this shape:
+                  * FIRST it re-enables the network adapters that the specialize
+                    pass disabled to dodge OOBE's mandatory ZDP updates. OOBE is
+                    over by now, so the network is safe to bring up.
                   * Drive-letter agnostic - scans every filesystem root for
                     \CEC-Autosetup\bootstrap.ps1, then a flat \bootstrap.ps1.
                   * Start-Process + return: FirstLogonCommands finishes
                     immediately so the desktop appears, while the pipeline runs
                     in its own -NoExit window the tech can watch and scroll.
+                    (RequiresUserInput=false also caps the desktop wait at ~2
+                    minutes regardless, so a long run never holds it hostage.)
                   * If the stick is missing, it says so loudly instead of
                     failing silently.
+
+                DELIBERATELY ONE COMMAND: Microsoft's own docs contradict each
+                other on whether multiple SynchronousCommands run sequentially or
+                simultaneously. Keeping everything in a single command - and
+                doing any further sequencing inside the pipeline - sidesteps the
+                ambiguity entirely.
 
                 DRY-RUN VARIANT: drop the '-Install' argument to make a bare run,
                 which performs the readiness SELF-CHECK and installs nothing.
@@ -269,9 +403,9 @@
             <FirstLogonCommands>
                 <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
                     <Order>1</Order>
-                    <Description>Launch CEC-Autosetup provisioning pipeline</Description>
+                    <Description>Re-enable networking, then launch the CEC-Autosetup pipeline</Description>
                     <RequiresUserInput>false</RequiresUserInput>
-                    <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$c='CEC-Autosetup\bootstrap.ps1','bootstrap.ps1'; $b=$null; foreach ($d in (Get-PSDrive -PSProvider FileSystem).Root) { foreach ($x in $c) { $p=Join-Path $d $x; if ((Test-Path $p) -and (-not $b)) { $b=$p } } }; if ($b) { Start-Process powershell.exe -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-NoExit','-File',$b,'-Install') } else { Start-Process powershell.exe -ArgumentList @('-NoProfile','-NoExit','-Command','Write-Host ''CEC-Autosetup not found on any drive. Insert the stick and run bootstrap.ps1 -Install manually.'' -ForegroundColor Red') }"</CommandLine>
+                    <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "try { Get-NetAdapter | Where-Object { $_.Status -eq 'Disabled' } | Enable-NetAdapter -Confirm:$false -ErrorAction SilentlyContinue } catch { }; $c='CEC-Autosetup\bootstrap.ps1','bootstrap.ps1'; $b=$null; foreach ($d in (Get-PSDrive -PSProvider FileSystem).Root) { foreach ($x in $c) { $p=Join-Path $d $x; if ((Test-Path $p) -and (-not $b)) { $b=$p } } }; if ($b) { Start-Process powershell.exe -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-NoExit','-File',$b,'-Install') } else { Start-Process powershell.exe -ArgumentList @('-NoProfile','-NoExit','-Command','Write-Host ''CEC-Autosetup not found on any drive. Insert the stick and run bootstrap.ps1 -Install manually.'' -ForegroundColor Red') }"</CommandLine>
                 </SynchronousCommand>
             </FirstLogonCommands>
         </component>
