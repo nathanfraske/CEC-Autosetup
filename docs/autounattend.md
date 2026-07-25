@@ -5,6 +5,15 @@
 CEC-Autosetup is a single entrypoint (`bootstrap.ps1`) you can call from any
 first-boot mechanism. Two common integrations follow. Both are copy-paste ready.
 
+> **A complete, ready-to-edit bench answer file lives in
+> [`unattend/autounattend.xml`](../unattend/autounattend.xml)** — full OOBE
+> skip, local bench admin, auto-logon, UAC-off, and a drive-letter-agnostic
+> launcher that starts the pipeline at first logon. See
+> [`unattend/README.md`](../unattend/README.md) for the design decisions,
+> security notes, and the checklist for reconciling it with an existing file.
+> The snippets below remain the reference for wiring into *your own* answer
+> file or `SetupComplete.cmd`.
+
 > `bootstrap.ps1` already sets TLS 1.2, sets a process-scoped
 > `ExecutionPolicy Bypass`, and self-elevates. You only need to invoke it.
 

@@ -1,0 +1,279 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-License-Identifier: Apache-2.0
+    Copyright 2026 Nathan M. Fraske, Critical Error Computing L.L.C.
+
+    CEC bench answer file - Windows 11 Pro, x64.
+
+    GOAL: zero technician clicks from "boot the installer" to "the provisioning
+    pipeline is running on screen". The tech picks the target disk (deliberately
+    NOT automated - see DiskConfiguration below), and everything after that is
+    hands-off through OOBE, auto-logon, and the CEC-Autosetup pipeline starting
+    itself.
+
+    USAGE: place this file named exactly  autounattend.xml  at the ROOT of the
+    Windows install USB. Put the tool alongside it as  \CEC-Autosetup\  (the
+    launcher below finds it on any drive letter).
+
+    ============================ EDIT BEFORE USE ============================
+    Every line tagged CHANGEME must be reviewed for your shop. At minimum:
+      * bench account name + password (oobeSystem / UserAccounts + AutoLogon)
+      * TimeZone
+      * ComputerName scheme
+    ==========================================================================
+
+    SECURITY NOTE: the bench account password lives in PLAINTEXT (or trivially
+    reversible base64) in this file, on a USB stick that walks around the shop.
+    Treat it as a throwaway local bench credential, never a password reused
+    anywhere else, and consider having the ship-out stage remove/rename the
+    account. See unattend/README.md.
+
+    VERIFICATION STATUS: structure and element names below follow the standard
+    Windows unattend schema, but Microsoft has changed OOBE/local-account
+    behavior across recent Windows 11 builds. Confirm against a scratch VM on
+    the exact image you deploy before trusting it on a customer build. Items
+    flagged VERIFY are the ones most likely to have shifted.
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+
+    <!-- =====================================================================
+         PASS 1: windowsPE - the installer environment itself.
+         Kills the language/keyboard prompt and the EULA click.
+         ===================================================================== -->
+    <settings pass="windowsPE">
+
+        <component name="Microsoft-Windows-International-Core-WinPE"
+                   processorArchitecture="amd64"
+                   publicKeyToken="31bf3856ad364e35"
+                   language="neutral"
+                   versionScope="nonSxS">
+            <SetupUILanguage>
+                <UILanguage>en-US</UILanguage>
+            </SetupUILanguage>
+            <InputLocale>0409:00000409</InputLocale>   <!-- CHANGEME if not US keyboard -->
+            <SystemLocale>en-US</SystemLocale>
+            <UILanguage>en-US</UILanguage>
+            <UserLocale>en-US</UserLocale>
+        </component>
+
+        <component name="Microsoft-Windows-Setup"
+                   processorArchitecture="amd64"
+                   publicKeyToken="31bf3856ad364e35"
+                   language="neutral"
+                   versionScope="nonSxS">
+
+            <UserData>
+                <AcceptEula>true</AcceptEula>
+                <!--
+                    ProductKey here is an EDITION SELECTOR, not activation. On a
+                    multi-edition ISO, omitting it makes Setup stop and ask which
+                    edition to install - a button press. The value below is
+                    Microsoft's published generic Pro key: it selects Pro and
+                    does NOT activate. Real activation comes from the board's
+                    embedded OEM key or your licensing.
+                    Remove this block if your ISO is single-edition Pro.
+                -->
+                <ProductKey>
+                    <Key>W269N-WFGWX-YVC9B-4J6C9-T83GX</Key>
+                    <WillShowUI>Never</WillShowUI>
+                </ProductKey>
+            </UserData>
+
+            <!--
+                ============ DISK CONFIGURATION: DELIBERATELY OMITTED ============
+                An automated <DiskConfiguration> block that wipes "DiskID 0" is
+                the single most dangerous thing in an answer file. DiskID
+                ordering is NOT guaranteed to match what the tech thinks is the
+                boot drive - on a build with multiple NVMe/SATA devices (or a
+                customer's data drive plugged in for migration) an automated
+                wipe can destroy the wrong disk irreversibly.
+
+                CEC's stance: the tech picks the target disk. That is ONE screen,
+                and it is the one screen worth keeping.
+
+                If you decide the bench is controlled enough to automate it,
+                uncomment and adapt the block below - and confirm DiskID on the
+                exact hardware first (diskpart > list disk in the installer,
+                Shift+F10). GPT/UEFI layout shown.
+
+            <DiskConfiguration>
+                <WillShowUI>OnError</WillShowUI>
+                <Disk wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+                    <DiskID>0</DiskID>
+                    <WillWipeDisk>true</WillWipeDisk>
+                    <CreatePartitions>
+                        <CreatePartition wcm:action="add"><Order>1</Order><Type>EFI</Type><Size>260</Size></CreatePartition>
+                        <CreatePartition wcm:action="add"><Order>2</Order><Type>MSR</Type><Size>16</Size></CreatePartition>
+                        <CreatePartition wcm:action="add"><Order>3</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>
+                    </CreatePartitions>
+                    <ModifyPartitions>
+                        <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Label>System</Label><Format>FAT32</Format></ModifyPartition>
+                        <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>2</PartitionID></ModifyPartition>
+                        <ModifyPartition wcm:action="add"><Order>3</Order><PartitionID>3</PartitionID><Label>Windows</Label><Letter>C</Letter><Format>NTFS</Format></ModifyPartition>
+                    </ModifyPartitions>
+                </Disk>
+            </DiskConfiguration>
+            <ImageInstall>
+                <OSImage>
+                    <InstallTo><DiskID>0</DiskID><PartitionID>3</PartitionID></InstallTo>
+                </OSImage>
+            </ImageInstall>
+                ================================================================
+            -->
+        </component>
+    </settings>
+
+    <!-- =====================================================================
+         PASS 2: specialize - runs after image apply, before OOBE.
+         Machine identity + the UAC change, so UAC is already off by the time
+         the bench account logs on (EnableLUA takes effect on reboot, and a
+         reboot happens between this pass and first logon).
+         ===================================================================== -->
+    <settings pass="specialize">
+
+        <component name="Microsoft-Windows-Shell-Setup"
+                   processorArchitecture="amd64"
+                   publicKeyToken="31bf3856ad364e35"
+                   language="neutral"
+                   versionScope="nonSxS">
+            <!-- '*' = random name. CHANGEME to your order-number scheme if you
+                 want the name to carry the work order (the pipeline reads the
+                 machine name into its reports). -->
+            <ComputerName>*</ComputerName>
+            <TimeZone>Central Standard Time</TimeZone>   <!-- CHANGEME -->
+        </component>
+
+        <component name="Microsoft-Windows-Deployment"
+                   processorArchitecture="amd64"
+                   publicKeyToken="31bf3856ad364e35"
+                   language="neutral"
+                   versionScope="nonSxS">
+            <RunSynchronous>
+                <!--
+                    UAC OFF for the provisioning window. This is the "preferred
+                    permanent home" the pipeline's docs point at: with EnableLUA=0
+                    set here, the bench admin's token is unsplit at first logon,
+                    so the pipeline and its resume task never hit a consent
+                    prompt on an unattended reboot.
+
+                    The pipeline's WindowsPrep stage detects this is already 0 and
+                    records it, and the ship-out stage restores it before delivery.
+                    KEEP THESE IN SYNC: if you remove this, the runtime stage sets
+                    it instead (one extra reboot for it to take effect).
+                -->
+                <RunSynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+                    <Order>1</Order>
+                    <Description>Disable UAC for the provisioning window</Description>
+                    <Path>reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA /t REG_DWORD /d 0 /f</Path>
+                </RunSynchronousCommand>
+            </RunSynchronous>
+        </component>
+    </settings>
+
+    <!-- =====================================================================
+         PASS 3: oobeSystem - the out-of-box experience.
+         This is where the click-elimination happens.
+         ===================================================================== -->
+    <settings pass="oobeSystem">
+
+        <component name="Microsoft-Windows-International-Core"
+                   processorArchitecture="amd64"
+                   publicKeyToken="31bf3856ad364e35"
+                   language="neutral"
+                   versionScope="nonSxS">
+            <InputLocale>0409:00000409</InputLocale>   <!-- CHANGEME with the WinPE one -->
+            <SystemLocale>en-US</SystemLocale>
+            <UILanguage>en-US</UILanguage>
+            <UserLocale>en-US</UserLocale>
+        </component>
+
+        <component name="Microsoft-Windows-Shell-Setup"
+                   processorArchitecture="amd64"
+                   publicKeyToken="31bf3856ad364e35"
+                   language="neutral"
+                   versionScope="nonSxS">
+
+            <OOBE>
+                <HideEULAPage>true</HideEULAPage>
+                <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+                <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+                <!-- VERIFY: online-account screen suppression is the element
+                     Microsoft has churned most across Win11 builds. Defining a
+                     LocalAccount below is the load-bearing part; these are the
+                     belt-and-braces. -->
+                <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+                <HideLocalAccountScreen>true</HideLocalAccountScreen>
+                <ProtectYourPC>3</ProtectYourPC>   <!-- 3 = skip all express settings -->
+                <NetworkLocation>Work</NetworkLocation>
+            </OOBE>
+
+            <!--
+                A LOCAL account is what actually bypasses the "sign in with a
+                Microsoft account" wall. CHANGEME: name + password.
+                The password is stored here in the clear - throwaway bench
+                credential only. See README security note.
+            -->
+            <UserAccounts>
+                <LocalAccounts>
+                    <LocalAccount wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+                        <Name>CECBench</Name>                  <!-- CHANGEME -->
+                        <DisplayName>CEC Bench</DisplayName>
+                        <Group>Administrators</Group>
+                        <Password>
+                            <Value>ChangeMe-BenchOnly</Value>  <!-- CHANGEME -->
+                            <PlainText>true</PlainText>
+                        </Password>
+                    </LocalAccount>
+                </LocalAccounts>
+            </UserAccounts>
+
+            <!--
+                Auto-logon so the pipeline starts with no keyboard touch.
+                LogonCount governs how many boots auto-login before Windows
+                reverts to the normal logon screen.
+
+                IMPORTANT: the pipeline REBOOTS several times (BIOS hand-off,
+                Windows Update cycles, driver-order restart boundaries). Each
+                consumes one auto-logon. 12 is deliberately generous so a
+                multi-reboot WU catch-up can't strand the run at a logon prompt.
+                The pipeline's resume task runs as SYSTEM and does not depend on
+                this, but the tech-visible console does.
+            -->
+            <AutoLogon>
+                <Enabled>true</Enabled>
+                <LogonCount>12</LogonCount>
+                <Username>CECBench</Username>                  <!-- CHANGEME: match above -->
+                <Password>
+                    <Value>ChangeMe-BenchOnly</Value>          <!-- CHANGEME: match above -->
+                    <PlainText>true</PlainText>
+                </Password>
+            </AutoLogon>
+
+            <!--
+                THE HAND-OFF: find CEC-Autosetup on whatever drive letter the
+                stick landed on and start the pipeline in its own visible window.
+
+                Why this shape:
+                  * Drive-letter agnostic - scans every filesystem root for
+                    \CEC-Autosetup\bootstrap.ps1, then a flat \bootstrap.ps1.
+                  * Start-Process + return: FirstLogonCommands finishes
+                    immediately so the desktop appears, while the pipeline runs
+                    in its own -NoExit window the tech can watch and scroll.
+                  * If the stick is missing, it says so loudly instead of
+                    failing silently.
+
+                DRY-RUN VARIANT: drop the '-Install' argument to make a bare run,
+                which performs the readiness SELF-CHECK and installs nothing.
+                Recommended for the first machine you test this file on.
+            -->
+            <FirstLogonCommands>
+                <SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+                    <Order>1</Order>
+                    <Description>Launch CEC-Autosetup provisioning pipeline</Description>
+                    <RequiresUserInput>false</RequiresUserInput>
+                    <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$c='CEC-Autosetup\bootstrap.ps1','bootstrap.ps1'; $b=$null; foreach ($d in (Get-PSDrive -PSProvider FileSystem).Root) { foreach ($x in $c) { $p=Join-Path $d $x; if ((Test-Path $p) -and (-not $b)) { $b=$p } } }; if ($b) { Start-Process powershell.exe -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-NoExit','-File',$b,'-Install') } else { Start-Process powershell.exe -ArgumentList @('-NoProfile','-NoExit','-Command','Write-Host ''CEC-Autosetup not found on any drive. Insert the stick and run bootstrap.ps1 -Install manually.'' -ForegroundColor Red') }"</CommandLine>
+                </SynchronousCommand>
+            </FirstLogonCommands>
+        </component>
+    </settings>
+</unattend>
