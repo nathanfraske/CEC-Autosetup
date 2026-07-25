@@ -325,6 +325,34 @@
             <UserLocale>en-US</UserLocale>
         </component>
 
+        <!--
+            Second mechanism for the same job as the PreventDeviceEncryption
+            registry write in specialize - deliberately BELT AND BRACES.
+
+            Neither path is strongly field-verified on 26200: Microsoft's
+            reference page for this component still carries stale boilerplate
+            claiming it "only applies to Windows 8", while their CURRENT OEM
+            BitLocker page (updated 2025-08) explicitly prescribes exactly this
+            setting for Windows 11. The registry value is the better-documented
+            of the two; this component is what Rufus writes for its "disable
+            BitLocker automatic device encryption" option, on empirical evidence
+            rather than documentation.
+
+            Using both costs nothing. Verifying the RESULT is what actually
+            matters - see the README: 'manage-bde -status C: -protectionaserrorlevel'
+            is the right pass/fail primitive for the ship-out gate.
+
+            Remove BOTH this and the registry command if shop policy is to ship
+            encryption armed rather than off.
+        -->
+        <component name="Microsoft-Windows-SecureStartup-FilterDriver"
+                   processorArchitecture="amd64"
+                   publicKeyToken="31bf3856ad364e35"
+                   language="neutral"
+                   versionScope="nonSxS">
+            <PreventDeviceEncryption>true</PreventDeviceEncryption>
+        </component>
+
         <component name="Microsoft-Windows-Shell-Setup"
                    processorArchitecture="amd64"
                    publicKeyToken="31bf3856ad364e35"

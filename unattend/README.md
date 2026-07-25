@@ -173,24 +173,75 @@ Two consequences, and the first one corrects a common fear:
 | **B** | **Ship genuinely armed** — add TPM + recovery-password protectors, enable protection, print the 48-digit key on a card in the box | Best for the customer. Requires the key never be lost, and a "suspend BitLocker before BIOS updates" warning on the card. |
 | **C** | **Ship the half-state** (encrypted, `Protection Off`) | **Avoid.** Cost of encryption, none of the benefit, and a customer who believes they're protected. This is what a machine defaults to if you don't decide. |
 
-**Licensing caveat on option A:** Microsoft's OEM BitLocker documentation says
-disabling device encryption outside of "OEM implements their own encryption
-technology" is *"prohibited as it violates the Windows 11 licensing
-requirements."* Weigh that before standardising on A. (The binding System
-Builder terms are behind partner auth — pull them if CEC has an account.)
+**Licensing caveat on option A — genuinely unresolved, don't let anyone tell you
+otherwise.** Microsoft's OEM BitLocker page says disabling device encryption
+outside of "OEM implements their own encryption technology" is *"prohibited as it
+violates the Windows 11 licensing requirements."* But that page lives in the
+OEM/ODM **hardware-design** docset (HLK, OA3, OPK) written for program OEMs, and
+**no public Microsoft licensing document — OEM System Builder terms included —
+contains any BitLocker requirement.** Whether the obligation flows to a System
+Builder licensee is undocumented either way, and the question appears genuinely
+undiscussed in the trade. Note the internal tension: the same page that calls it
+"prohibited" publishes the exact mechanism, and Microsoft ships an end-user
+Settings toggle any customer may freely flip.
 
-**Verify, never assume — both decrypted and clear-key report `Protection Off`:**
+**That last point is the cleanest path out.** An *end user* turning encryption
+off is unambiguously fine. So the least-exposed version of option A is to make
+it a documented customer choice at handover rather than a silent factory
+default. If you want certainty, get it in writing from your Microsoft OEM
+distributor — there is no public answer.
+
+### Prevention: use both mechanisms, then verify the result
+
+This file sets **both** the `PreventDeviceEncryption` registry value (in
+`specialize`) and the `Microsoft-Windows-SecureStartup-FilterDriver` unattend
+component (in `oobeSystem`). Neither is strongly field-verified on 26200 — the
+component's reference page carries stale "Windows 8 only" boilerplate while
+Microsoft's current OEM page prescribes it for Windows 11, and the registry
+value is better documented but its behaviour in `specialize` specifically is
+untested here. Using both costs nothing; **verifying the result is what
+actually matters.**
+
+Timing note if you ever apply it by hand: it must land **after** WinPE — at or
+after the first OOBE screen (`Shift+F10`). Written at the very first WinPE
+screen it goes into WinPE's own hive and does nothing. Applied offline to a
+mounted image, the path is `ControlSet001\Control\BitLocker`, **not**
+`CurrentControlSet` (that symlink doesn't exist in an offline hive — several
+guides get this wrong).
+
+**Verify, never assume — decrypted and clear-key BOTH report `Protection Off`:**
 
 ```powershell
-manage-bde -status                      # 0.0% vs 100.0% is the discriminator
-manage-bde -protectors -get C:          # catches a recovery password nobody was shown
+manage-bde -status                                  # 0.0% vs 100.0% is the discriminator
+manage-bde -protectors -get C:                      # catches a recovery password nobody was shown
+manage-bde -status C: -protectionaserrorlevel       # exit 0 = protected, 1 = not — the gate primitive
 ```
+
+That last one is the right pass/fail check for an automated ship-out gate.
+**`Protection On` alone is not sufficient** — the gate must confirm protection is
+on *and* a `RecoveryPassword` protector exists *and* that password is somewhere
+the customer controls.
 
 Look for *"Uses Secure Boot for integrity validation"* in the protector output:
 present = PCR7 (resilient to firmware updates), absent = the legacy PCR profile
-(fragile to BIOS flashes). **Many DIY desktops never auto-encrypt at all** — a
-discrete GPU or any add-in card with an option ROM breaks PCR7 binding — so
-behaviour varies per build and must be tested per configuration, not assumed.
+(fragile to BIOS flashes).
+
+**Two wrinkles that make this a per-machine check, not a per-image assumption:**
+
+- **Many DIY desktops never auto-encrypt at all** — a discrete GPU or any add-in
+  card with an option ROM breaks PCR7 binding. Behaviour varies per build.
+- **A machine that doesn't qualify at build time can start qualifying later.**
+  Microsoft: *"If a device doesn't initially qualify for device encryption, but
+  then a change is made that causes the device to qualify... device encryption
+  enables BitLocker automatically as soon as it detects it."* There's a firsthand
+  25H2 report of exactly this — a local-account machine silently encrypting after
+  a BIOS update fixed PCR7 binding, with no protector saved and no notification.
+  This is why the `PreventDeviceEncryption` flag matters even on machines that
+  test clean today.
+
+**Ship-out sequencing note:** `sysprep` **fails** if BitLocker protection is on
+for C: (`setupact.log`: *"BitLocker is on for the OS volume"*). If shop policy is
+option B (ship armed), arm it *after* the sysprep seal, not before.
 
 ## Two answer files, two jobs
 
